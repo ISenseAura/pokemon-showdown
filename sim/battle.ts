@@ -2504,7 +2504,6 @@ export class Battle {
 				pokemon.illusion = null;
 				pokemon.isActive = false;
 				pokemon.isStarted = false;
-				delete pokemon.terastallized;
 				if (pokemon.regressionForme) {
 					// after clearing volatiles
 					pokemon.details = pokemon.getUpdatedDetails();
@@ -2767,6 +2766,7 @@ export class Battle {
 			action.target.faintQueued = false;
 			action.target.subFainted = false;
 			action.target.status = '';
+			delete action.target.terastallized;
 			action.target.hp = 1; // Needed so hp functions works
 			action.target.sethp(action.target.maxhp / 2);
 			this.add('-heal', action.target, action.target.getHealth, '[from] move: Revival Blessing');
