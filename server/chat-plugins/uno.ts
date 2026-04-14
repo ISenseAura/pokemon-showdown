@@ -98,7 +98,7 @@ export class UNO extends Rooms.RoomGame<UNOPlayer> {
 	spectators: { [k: string]: number } = Object.create(null);
 	isPlusFour = false;
 	gameNumber: number;
-	lastColor: Color | null = null; // The color of the last card played except for wild cards.
+	lastColor: Color | null = null;
 
 	constructor(room: Room, cap: number, suppressMessages: boolean) {
 		super(room);
