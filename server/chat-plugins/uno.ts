@@ -221,7 +221,7 @@ export class UNO extends Rooms.RoomGame<UNOPlayer> {
 				}
 				this.topCard.changedColor = this.lastColor;
 				this.sendToRoom(
-					`|raw|${Utils.escapeHTML(name)} has not picked a color, the color will stay as ` +
+					`|raw|${Utils.escapeHTML(name)} failed to pick a color. It will remain ` +
 					`<span style="color: ${textColors[this.topCard.changedColor]}">${this.topCard.changedColor}</span>.`
 				);
 			}
