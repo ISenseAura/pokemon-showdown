@@ -17,6 +17,7 @@ const PERIODIC_MATCH_INTERVAL = 60 * SECONDS;
 
 import type { ChallengeType } from './room-battle';
 import { BattleReady, BattleChallenge, GameChallenge, BattleInvite, challenges } from './ladders-challenges';
+import { isTcgFormat, parseTcgDeck } from './tcg';
 
 /**
  * Keys are formatids
@@ -64,6 +65,33 @@ class Ladder extends LadderStore {
 		} catch (e: any) {
 			connection.popup(`Your selected format is invalid:\n\n- ${e.message}`);
 			return null;
+		}
+
+		if (isTcgFormat(this.formatid)) {
+			const format = Dex.formats.get(this.formatid);
+			let deckJson = '';
+			if (!format.team) {
+				const parsed = parseTcgDeck(team);
+				if (parsed.ok) {
+					deckJson = parsed.deck.length ? JSON.stringify(parsed.deck) : '';
+				} else if (team?.includes('|')) {
+					deckJson = '';
+				} else {
+					connection.popup(`Your TCG deck was rejected:\n\n- ${parsed.error}`);
+					return null;
+				}
+			}
+			let rating = 0;
+			if (isRated && !Ladders.disabled) {
+				rating = await this.getRating(userid) || 1;
+			} else if (Ladders.disabled) {
+				connection.popup(`The ladder is temporarily disabled due to technical difficulties - you will not receive ladder rating for this game.`);
+				rating = 1;
+			}
+			const settings = { ...user.battleSettings, team: deckJson };
+			user.battleSettings.inviteOnly = false;
+			user.battleSettings.hidden = false;
+			return new BattleReady(userid, this.formatid, settings, rating, challengeType);
 		}
 
 		let rating = 0;

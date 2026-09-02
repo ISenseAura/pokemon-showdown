@@ -8,6 +8,7 @@ export default configure([
 			"logs/",
 			"node_modules/",
 			"dist/",
+			"Wave-TCG/",
 			"data/**/learnsets.ts",
 			"tools/set-import/importer.js",
 			"tools/set-import/sets",

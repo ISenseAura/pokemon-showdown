@@ -5,6 +5,9 @@ const child_process = require("child_process");
 const esbuild = require('esbuild');
 
 const copyOverDataJSON = (file = 'data') => {
+	if (!fs.existsSync(file)) return;
+	const destDir = require('path').resolve('dist', file);
+	fs.mkdirSync(destDir, { recursive: true });
 	const files = fs.readdirSync(file);
 	for (const f of files) {
 		if (fs.statSync(`${file}/${f}`).isDirectory()) {
@@ -31,7 +34,11 @@ const findFilesForPath = path => {
 		// traverse, databases adds/removes files which can lead to a filesystem
 		// race between readdirSync and statSync. Please, at some point someone
 		// fix this function to be more robust.
-		if (cur.includes('node_modules') || cur.includes("/logs") || cur.includes("/databases")) continue;
+		if (
+			cur.includes('node_modules') || cur.includes("/logs") || cur.includes("/databases") ||
+			cur.includes("/.git") || cur.includes("/Wave-TCG/tests") || cur.includes("/Wave-TCG/testing") ||
+			cur.includes("/Wave-TCG/compiler")
+		) continue;
 		if (fs.statSync(cur).isDirectory()) {
 			out.push(...findFilesForPath(cur));
 		} else if (shouldBeCompiled(cur)) {
@@ -52,6 +59,8 @@ exports.transpile = decl => {
 	});
 	fs.copyFileSync('./config/config-example.js', './dist/config/config-example.js');
 	copyOverDataJSON();
+	copyOverDataJSON('Wave-TCG/data');
+	copyOverDataJSON('Wave-TCG/dex');
 
 	// NOTE: replace is asynchronous - add additional replacements for the same path in one call instead of making multiple calls.
 	if (decl) {

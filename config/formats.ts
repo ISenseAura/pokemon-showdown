@@ -5791,4 +5791,45 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		battle: { trunc: Math.trunc },
 		ruleset: ['HP Percentage Mod', 'Cancel Mod', 'Desync Clause Mod', 'Max Team Size = 24', 'Max Move Count = 24', 'Max Level = 9999', 'Default Level = 100'],
 	},
+
+	// Pokémon TCG (WaveTCG)
+	///////////////////////////////////////////////////////////////////
+
+	{
+		section: "Pokémon TCG",
+	},
+	{
+		name: "[TCG] Pocket",
+		desc: `Pokémon TCG Pocket via WaveTCG. Empty team = sample deck. Graphics animate TcgEvents from |tcg|; play with /choose {JSON TcgAction}.`,
+		searchShow: false,
+		rated: false,
+		tournamentShow: false,
+		ruleset: ['Cancel Mod'],
+	},
+	{
+		name: "[TCG] Pocket Random",
+		desc: `Pokémon TCG Pocket with a random assigned deck (Premier / Viable / Rogue / Cursed pools). No deck required.`,
+		team: 'random',
+		searchShow: false,
+		rated: false,
+		tournamentShow: false,
+		ruleset: ['Cancel Mod'],
+	},
+	{
+		name: "[TCG] Standard",
+		desc: `Pokémon TCG Standard via WaveTCG (60 cards, regulation H+). Empty team = sample deck.`,
+		searchShow: false,
+		rated: false,
+		tournamentShow: false,
+		ruleset: ['Cancel Mod'],
+	},
+	{
+		name: "[TCG] Standard Random",
+		desc: `Pokémon TCG Standard with a randomly generated 60-card deck assigned at battle start. No deck required.`,
+		team: 'random',
+		searchShow: false,
+		rated: false,
+		tournamentShow: false,
+		ruleset: ['Cancel Mod'],
+	},
 ];
