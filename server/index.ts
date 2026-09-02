@@ -125,9 +125,12 @@ function setupGlobals() {
 
 	const TeamValidatorAsync = require('./team-validator-async');
 	global.TeamValidatorAsync = TeamValidatorAsync;
+	global.TeamValidator = TeamValidatorAsync.TeamValidator;
 
 	global.Sockets = Sockets;
-	Sockets.start(Config.subprocessescache);
+	if (!Config.lazysockets) {
+		Sockets.start(Config.subprocessescache);
+	}
 }
 
 export const readyPromise = cleanupStale().then(() => {

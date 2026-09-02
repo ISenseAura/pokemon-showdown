@@ -3,6 +3,38 @@
 const assert = require('assert').strict;
 
 describe('Chat', () => {
+	it('should convert interface language preferences to game text language codes', () => {
+		assert.equal(Chat.getDexLanguage('japanese'), 'ja');
+		assert.equal(Chat.getDexLanguage('simplifiedchinese'), 'zh-cn');
+		assert.equal(Chat.getDexLanguage('portuguese'), 'en');
+	});
+
+	it('should display both English and native language names', () => {
+		assert.equal(Chat.getLanguageName('japanese'), '日本語 (Japanese)');
+		assert.equal(Chat.getLanguageName('english'), 'English');
+	});
+
+	it('should localize data HTML', () => {
+		const html = Chat.getDataMoveHTML(Dex.moves.get('Close Combat'), { language: 'japanese' });
+		assert(html.includes('インファイト'));
+		assert(html.includes("Lowers the user's Defense and Sp. Def by 1."));
+		const detailsHTML = Chat.getDataMoveHTML(Dex.moves.get('Close Combat'), {
+			language: 'japanese', hideShortDescription: true,
+		});
+		assert(!detailsHTML.includes("Lowers the user's Defense"));
+	});
+
+	it('should not infinite loop formatText', () => {
+		assert.equal(
+			Chat.formatText(`<\\\\||^^**~~\`\`https://a/Olaaaseusbobalhos\`\`~~**^^||\\\\`),
+			`&lt;<sub><span class="spoiler"><sup><b><s><code><a href="https://a/Olaaaseusbobalhos" rel="noopener" target="_blank">https://a/Olaaaseusbobalhos</a></code></s></b></sup></span></sub>`
+		);
+		assert.equal(
+			Chat.formatText(`[[https://google.com/]]text`),
+			`<a href="//www.google.com/search?ie=UTF-8&btnI&q=https%3A%2F%2Fgoogle.com%2F" target="_blank">https://google.com/</a>text`
+		);
+	});
+
 	it('should run formatText correctly', () => {
 		assert.equal(
 			Chat.formatText(`hi **__bold italics__** ^^superscript^^ \\\\subscript\\\\ normal ~~strikethrough~~ bye`),

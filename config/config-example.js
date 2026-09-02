@@ -25,6 +25,15 @@ exports.bindaddress = '0.0.0.0';
  */
 exports.wsdeflate = null;
 
+/**
+ * lazysockets - disables eager initialization of network services
+ *  Turn this on if you'd prefer to manually connect Showdown to the network,
+ *  or you intend to run it offline.
+ *
+ * @type {boolean}
+ */
+exports.lazysockets = false;
+
 /*
 // example:
 exports.wsdeflate = {
@@ -100,6 +109,11 @@ exports.subprocesses = {
 	 *   amount of traffic (i.e. hundreds of concurrent battles).
 	 */
 	simulator: 1,
+	/**
+	 * for simulating Pokémon TCG (WaveTCG) battles
+	 *   Separate from simulator so the TCG catalog does not inflate gen 9 workers.
+	 */
+	tcg: 1,
 
 	// beyond this point, it'd be very weird if you needed more than one of each of these
 

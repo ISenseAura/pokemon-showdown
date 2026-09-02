@@ -33,28 +33,8 @@ describe(`Pursuit`, () => {
 		const damage = hpBeforeSwitch - giratina.hp;
 		// 0 Atk Tera Dark Kingambit switching boosted Pursuit (80 BP) vs. 0 HP / 0 Def Giratina: 256-304
 		assert.bounded(damage, [256, 304], 'Actual damage: ' + damage);
-	});
-
-	it(`should continue the switch in Gen 3`, () => {
-		battle = common.gen(3).createBattle([[
-			{ species: "Tyranitar", ability: 'sandstream', moves: ['pursuit'] },
-		], [
-			{ species: "Alakazam", ability: 'magicguard', moves: ['psyshock'] },
-			{ species: "Clefable", ability: 'unaware', moves: ['calmmind'] },
-		]]);
-		battle.makeChoices('move Pursuit', 'switch 2');
-		assert(battle.p2.active[0].hp);
-	});
-
-	it(`should continue the switch in Gen 4`, () => {
-		battle = common.gen(4).createBattle([[
-			{ species: "Tyranitar", ability: 'sandstream', moves: ['pursuit'] },
-		], [
-			{ species: "Alakazam", ability: 'magicguard', moves: ['psyshock'] },
-			{ species: "Clefable", ability: 'unaware', moves: ['calmmind'] },
-		]]);
-		battle.makeChoices('move Pursuit', 'switch 2');
-		assert(battle.p2.active[0].hp);
+		const pursuit = battle.p1.active[0].moveSlots[0];
+		assert.equal(pursuit.pp, pursuit.maxpp - 2);
 	});
 
 	it(`should not repeat`, () => {
@@ -84,6 +64,57 @@ describe(`Pursuit`, () => {
 		const furret = battle.p1.pokemon[2];
 		battle.makeChoices('move pursuit mega -2, switch 3', 'auto');
 		assert.bounded(furret.maxhp - furret.hp, [60, 70]);
+	});
+
+	it(`should activate on the first target switching out`, () => {
+		battle = common.createBattle({ gameType: 'doubles' }, [[
+			{ species: "Beedrill", moves: ['pursuit'] },
+			{ species: "Furret", moves: ['pursuit'] },
+		], [
+			{ species: "Clefable", ability: 'shellarmor', moves: ['calmmind'] },
+			{ species: "Toxapex", moves: ['calmmind'] },
+			{ species: "Wynaut", moves: ['calmmind'] },
+			{ species: "Alakazam", moves: ['calmmind'] },
+		]]);
+		const [clefable, toxapex, wynaut, alakazam] = battle.p2.pokemon;
+		battle.makeChoices('move pursuit 1, move pursuit 2', 'switch 3, switch 4'); // Does not matter who Pursuit targets
+		assert.bounded(clefable.maxhp - clefable.hp, [34 + 30, 40 + 35]);
+		assert.fullHP(toxapex);
+		assert.fullHP(wynaut);
+		assert.fullHP(alakazam);
+	});
+
+	it(`should activate on the second target switching out, if the first fainted`, () => {
+		battle = common.createBattle({ gameType: 'doubles' }, [[
+			{ species: "Beedrill", moves: ['pursuit'] },
+			{ species: "Furret", moves: ['pursuit'] },
+		], [
+			{ species: "Clefable", ability: 'shellarmor', moves: ['calmmind'] },
+			{ species: "Shedinja", moves: ['calmmind'], evs: { spe: 252 } },
+			{ species: "Wynaut", moves: ['calmmind'] },
+			{ species: "Alakazam", moves: ['calmmind'] },
+		]]);
+		const [clefable, shedinja, wynaut, alakazam] = battle.p2.pokemon;
+		battle.makeChoices('move pursuit 1, move pursuit 2', 'switch 3, switch 4');
+		assert.bounded(clefable.maxhp - clefable.hp, [34, 40]);
+		assert.fainted(shedinja);
+		assert.fullHP(wynaut);
+		assert.fullHP(alakazam);
+	});
+
+	it(`should activate on a switching opponent even if targeting an ally`, () => {
+		battle = common.createBattle({ gameType: 'doubles' }, [[
+			{ species: "Beedrill", item: 'beedrillite', moves: ['pursuit'] },
+			{ species: "Clefable", moves: ['calmmind'] },
+			{ species: "Furret", moves: ['calmmind'] },
+		], [
+			{ species: "Clefable", moves: ['calmmind'] },
+			{ species: "Alakazam", moves: ['calmmind'] },
+			{ species: "Roserade", moves: ['calmmind'] },
+		]]);
+		const clefable = battle.p2.pokemon[0];
+		battle.makeChoices('move pursuit mega -2, switch 3', 'switch 3, move calmmind');
+		assert.bounded(clefable.maxhp - clefable.hp, [53, 63]);
 	});
 
 	it(`should not double in power or activate before a switch triggered by Red Card`, () => {
@@ -145,5 +176,235 @@ describe(`Pursuit`, () => {
 		const gengar = battle.p2.active[0];
 		battle.makeChoices('move pursuit 1, move sleeptalk', 'auto');
 		assert.false.fullHP(gengar);
+	});
+
+	it(`should be able to be paralyzed to prevent activation`, () => {
+		battle = common.createBattle({ forceRandomChance: true }, [[
+			{ species: "Tyranitar", moves: ['pursuit', 'sleeptalk'] },
+		], [
+			{ species: "Jolteon", moves: ['thunderwave'] },
+			{ species: "Clefable", moves: ['calmmind'] },
+		]]);
+		const jolteon = battle.p2.pokemon[0];
+		battle.makeChoices('move sleeptalk', 'move thunderwave');
+		assert.equal(battle.p1.active[0].status, 'par');
+		battle.makeChoices('move pursuit', 'switch 2');
+		assert.fullHP(jolteon);
+	});
+
+	it(`should not activate if Encored into Pursuit`, () => {
+		battle = common.createBattle({ gameType: 'doubles' }, [[
+			{ species: "Empoleon", moves: ['tackle', 'pursuit'] },
+			{ species: "Carnivine", moves: ['sleeptalk'] },
+		], [
+			{ species: "Deoxys", moves: ['sleeptalk', 'encore'] },
+			{ species: "Infernape", moves: ['sleeptalk', 'uturn'] },
+			{ species: "Carnivine", moves: ['sleeptalk'] },
+		]]);
+		const [deoxys, infernape] = battle.p2.active;
+		battle.makeChoices('move pursuit 1, move sleeptalk', 'move sleeptalk, move sleeptalk');
+		deoxys.hp = deoxys.maxhp;
+		battle.makeChoices('move tackle 1, move sleeptalk', 'move encore 1, move uturn 2');
+		assert.fullHP(deoxys);
+		assert.fullHP(infernape);
+		battle.makeChoices('', 'switch 3');
+		assert.false.fullHP(deoxys);
+	});
+
+	it(`should not activate other move if Encored out of Pursuit`, () => {
+		battle = common.createBattle({ gameType: 'doubles' }, [[
+			{ species: "Empoleon", moves: ['tackle', 'pursuit'] },
+			{ species: "Carnivine", moves: ['sleeptalk'] },
+		], [
+			{ species: "Deoxys", moves: ['sleeptalk', 'encore'] },
+			{ species: "Infernape", moves: ['sleeptalk', 'uturn'] },
+			{ species: "Carnivine", moves: ['sleeptalk'] },
+		]]);
+		const [deoxys, infernape] = battle.p2.active;
+		battle.makeChoices('move tackle 1, move sleeptalk', 'move sleeptalk, move sleeptalk');
+		deoxys.hp = deoxys.maxhp;
+		battle.makeChoices('move pursuit 1, move sleeptalk', 'move encore 1, move uturn 2');
+		assert.fullHP(deoxys);
+		assert.fullHP(infernape);
+		battle.makeChoices('', 'switch 3');
+		assert.false.fullHP(deoxys);
+	});
+
+	describe(`[Gen 4]`, () => {
+		it(`should continue the switch`, () => {
+			battle = common.gen(4).createBattle([[
+				{ species: "Tyranitar", ability: 'sandstream', moves: ['pursuit'] },
+			], [
+				{ species: "Alakazam", ability: 'magicguard', moves: ['psyshock'] },
+				{ species: "Clefable", ability: 'unaware', moves: ['calmmind'] },
+			]]);
+			battle.makeChoices('move Pursuit', 'switch 2');
+			assert(battle.p2.active[0].hp);
+		});
+
+		it(`should not activate if the user is asleep at the beginning of the turn`, () => {
+			battle = common.gen(4).createBattle([[
+				{ species: "Tyranitar", moves: ['pursuit'] },
+			], [
+				{ species: "Breloom", moves: ['spore'] },
+				{ species: "Breloom", moves: ['sleeptalk'] },
+			]]);
+			battle.makeChoices('move pursuit', 'move spore');
+			assert.equal(battle.p1.active[0].status, 'slp');
+			for (let i = 0; i < 5; i++) {
+				if (battle.p1.active[0].status !== 'slp') break;
+				battle.makeChoices('move pursuit', 'switch 2');
+			}
+			// Tyranitar woke up and used Pursuit
+			const activeBreloom = battle.p2.active[0];
+			assert.bounded(activeBreloom.maxhp - activeBreloom.hp, [33, 40]);
+			assert.fullHP(battle.p2.pokemon[1].hp);
+		});
+
+		it(`should be able to be paralyzed to prevent activation`, () => {
+			battle = common.gen(4).createBattle({ forceRandomChance: true }, [[
+				{ species: "Tyranitar", moves: ['pursuit', 'sleeptalk'] },
+			], [
+				{ species: "Jolteon", moves: ['thunderwave'] },
+				{ species: "Clefable", moves: ['calmmind'] },
+			]]);
+			const jolteon = battle.p2.pokemon[0];
+			battle.makeChoices('move sleeptalk', 'move thunderwave');
+			assert.equal(battle.p1.active[0].status, 'par');
+			battle.makeChoices('move pursuit', 'switch 2');
+			assert.false.fullHP(jolteon);
+		});
+
+		it(`should activate if Encored into Pursuit`, () => {
+			battle = common.gen(4).createBattle({ gameType: 'doubles' }, [[
+				{ species: "Empoleon", moves: ['tackle', 'pursuit'] },
+				{ species: "Carnivine", moves: ['sleeptalk'] },
+			], [
+				{ species: "Deoxys", moves: ['sleeptalk', 'encore'] },
+				{ species: "Infernape", moves: ['sleeptalk', 'uturn'] },
+				{ species: "Carnivine", moves: ['sleeptalk'] },
+			]]);
+			const [deoxys, infernape] = battle.p2.active;
+			battle.makeChoices('move pursuit 1, move sleeptalk', 'move sleeptalk, move sleeptalk');
+			deoxys.hp = deoxys.maxhp;
+			battle.makeChoices('move tackle 1, move sleeptalk', 'move encore 1, move uturn 2');
+			assert.fullHP(deoxys);
+			assert.false.fullHP(infernape);
+			battle.makeChoices('', 'switch 3');
+			assert.fullHP(deoxys);
+		});
+
+		it(`should not activate other move if Encored out of Pursuit`, () => {
+			battle = common.gen(4).createBattle({ gameType: 'doubles' }, [[
+				{ species: "Empoleon", moves: ['tackle', 'pursuit'] },
+				{ species: "Carnivine", moves: ['sleeptalk'] },
+			], [
+				{ species: "Deoxys", moves: ['sleeptalk', 'encore'] },
+				{ species: "Infernape", moves: ['sleeptalk', 'uturn'] },
+				{ species: "Carnivine", moves: ['sleeptalk'] },
+			]]);
+			const [deoxys, infernape] = battle.p2.active;
+			battle.makeChoices('move tackle 1, move sleeptalk', 'move sleeptalk, move sleeptalk');
+			deoxys.hp = deoxys.maxhp;
+			battle.makeChoices('move pursuit 1, move sleeptalk', 'move encore 1, move uturn 2');
+			assert.fullHP(deoxys);
+			assert.fullHP(infernape);
+			battle.makeChoices('', 'switch 3');
+			assert.false.fullHP(deoxys);
+		});
+	});
+
+	describe(`[Gen 3]`, () => {
+		it(`should continue the switch`, () => {
+			battle = common.gen(3).createBattle([[
+				{ species: "Tyranitar", ability: 'sandstream', moves: ['pursuit'] },
+			], [
+				{ species: "Alakazam", ability: 'magicguard', moves: ['psyshock'] },
+				{ species: "Clefable", ability: 'unaware', moves: ['calmmind'] },
+			]]);
+			battle.makeChoices('move Pursuit', 'switch 2');
+			assert(battle.p2.active[0].hp);
+		});
+
+		it(`should only activate on the targeted opponent`, () => {
+			battle = common.gen(3).createBattle({ gameType: 'doubles' }, [[
+				{ species: "Beedrill", moves: ['pursuit'] },
+				{ species: "Furret", moves: ['pursuit'] },
+			], [
+				{ species: "Clefable", ability: 'shellarmor', moves: ['calmmind'] },
+				{ species: "Clefable", ability: 'shellarmor', moves: ['calmmind'] },
+				{ species: "Wynaut", moves: ['calmmind'] },
+				{ species: "Alakazam", moves: ['calmmind'] },
+			]]);
+			const [clefable, clefable2, wynaut, alakazam] = battle.p2.pokemon;
+			battle.makeChoices('move pursuit 1, move pursuit 2', 'switch 3, switch 4');
+			assert.bounded(clefable.maxhp - clefable.hp, [35, 42]);
+			assert.bounded(clefable2.maxhp - clefable2.hp, [35, 42]);
+			assert.fullHP(wynaut);
+			assert.fullHP(alakazam);
+		});
+
+		it(`should not activate on a switching opponent if targeting an ally`, () => {
+			battle = common.gen(3).createBattle({ gameType: 'doubles' }, [[
+				{ species: "Beedrill", moves: ['pursuit'] },
+				{ species: "Clefable", moves: ['calmmind'] },
+				{ species: "Furret", moves: ['calmmind'] },
+			], [
+				{ species: "Clefable", moves: ['calmmind'] },
+				{ species: "Alakazam", moves: ['calmmind'] },
+				{ species: "Roserade", moves: ['calmmind'] },
+			]]);
+			const clefable = battle.p2.pokemon[0];
+			battle.makeChoices('move pursuit -2, switch 3', 'switch 3, move calmmind');
+			assert.fullHP(clefable);
+			const furret = battle.p1.pokemon[1];
+			assert.bounded(furret.maxhp - furret.hp, [25, 30]);
+		});
+	});
+
+	describe(`[Gen 2]`, () => {
+		it(`should continue the switch`, () => {
+			battle = common.gen(2).createBattle([[
+				{ species: "Tyranitar", moves: ['pursuit'] },
+			], [
+				{ species: "Alakazam", moves: ['psyshock'] },
+				{ species: "Clefable", moves: ['calmmind'] },
+			]]);
+			battle.makeChoices('move Pursuit', 'switch 2');
+			assert(battle.p2.active[0].hp);
+		});
+
+		it(`should try to activate even if the user is asleep at the beginning of the turn`, () => {
+			battle = common.gen(2).createBattle([[
+				{ species: "Paras", moves: ['pursuit'], evs: { spa: 252 } },
+			], [
+				{ species: "Parasect", moves: ['spore'], evs: { hp: 252, spd: 252 } },
+				{ species: "Parasect", moves: ['sleeptalk'], evs: { hp: 252, spd: 252 } },
+			]]);
+			battle.makeChoices('move pursuit', 'move spore');
+			assert.equal(battle.p1.active[0].status, 'slp');
+			for (let i = 0; i < 5; i++) {
+				if (battle.p1.active[0].status !== 'slp') break;
+				battle.makeChoices('move pursuit', 'switch 2');
+			}
+			// Paras woke up and used Pursuit
+			assert.fullHP(battle.p2.active[0].hp);
+			const inactiveParasect = battle.p2.pokemon[1];
+			assert.bounded(inactiveParasect.maxhp - inactiveParasect.hp, [42, 50]);
+		});
+
+		it(`should be able to be paralyzed to prevent activation`, () => {
+			battle = common.gen(2).createBattle({ forceRandomChance: true }, [[
+				{ species: "Tyranitar", moves: ['pursuit', 'sleeptalk'] },
+			], [
+				{ species: "Jolteon", moves: ['thunderwave'] },
+				{ species: "Clefable", moves: ['calmmind'] },
+			]]);
+			const jolteon = battle.p2.pokemon[0];
+			battle.makeChoices('move sleeptalk', 'move thunderwave');
+			assert.equal(battle.p1.active[0].status, 'par');
+			battle.makeChoices('move pursuit', 'switch 2');
+			assert.fullHP(jolteon);
+		});
 	});
 });

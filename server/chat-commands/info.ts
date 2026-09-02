@@ -603,6 +603,7 @@ export const commands: Chat.ChatCommands = {
 		}
 		const newTargets = dex.dataSearch(target);
 		const showDetails = (cmd.startsWith('dt') || cmd === 'details');
+		const textLanguage = Chat.getDexLanguage(this.language);
 		if (!newTargets?.length) {
 			throw new Chat.ErrorMessage(`'${target}' doesn't match any Pok\u00e9mon, item, move, ability or nature${Dex.gen > dex.gen ? ` in Gen ${dex.gen}` : ""}. (Check your spelling?)`);
 		}
@@ -615,6 +616,7 @@ export const commands: Chat.ChatCommands = {
 				buffer = `'${target}' has no exact match${Dex.gen > dex.gen ? ` in Gen ${dex.gen}` : ""}. Approximate match${newTargets.length === 1 ? '' : 'es'}:\n`;
 			}
 			let details: { [k: string]: string } = {};
+			let description = '';
 			switch (newTarget.searchType) {
 			case 'nature':
 				const nature = Dex.natures.get(newTarget.name);
@@ -643,8 +645,11 @@ export const commands: Chat.ChatCommands = {
 					tierDisplay === 'doubles tiers' ? pokemon.doublesTier :
 					tierDisplay === 'National Dex tiers' ? pokemon.natDexTier :
 					pokemon.num >= 0 ? String(pokemon.num) : pokemon.tier;
-				buffer += `${prefix}${Chat.getDataPokemonHTML(pokemon, dex.gen, displayedTier)}\n`;
+				buffer += `${prefix}${Chat.getDataPokemonHTML(
+					pokemon, { dex, tier: displayedTier, language: this.language }
+				)}\n`;
 				if (showDetails) {
+					description = dex.text.get(pokemon, textLanguage).desc;
 					let weighthit = 20;
 					if (pokemon.weighthg >= 2000) {
 						weighthit = 120;
@@ -704,7 +709,7 @@ export const commands: Chat.ChatCommands = {
 						details["Pre-Evolution"] = pokemon.prevo;
 					}
 					if (!evos.length) {
-						details[`<font color="#686868">Does Not Evolve</font>`] = "";
+						details[`<span class="gray">Does Not Evolve</span>`] = "";
 					} else {
 						details["Evolution"] = evos.join(", ");
 					}
@@ -712,8 +717,11 @@ export const commands: Chat.ChatCommands = {
 				break;
 			case 'item':
 				const item = dex.items.get(newTarget.name);
-				buffer += `${prefix}${Chat.getDataItemHTML(item)}\n`;
+				buffer += `${prefix}${Chat.getDataItemHTML(
+					item, { dex, language: this.language, hideShortDescription: showDetails }
+				)}\n`;
 				if (showDetails) {
+					description = dex.text.get(item, textLanguage).desc;
 					details = {
 						Gen: String(item.gen),
 					};
@@ -744,17 +752,21 @@ export const commands: Chat.ChatCommands = {
 				break;
 			case 'move':
 				const move = dex.moves.get(newTarget.name);
-				buffer += `${prefix}${Chat.getDataMoveHTML(move)}\n`;
+				buffer += `${prefix}${Chat.getDataMoveHTML(
+					move, { dex, language: this.language, hideShortDescription: showDetails }
+				)}\n`;
 				if (showDetails) {
+					description = dex.text.get(move, textLanguage).desc;
 					details = {
 						Priority: String(move.priority),
 						Gen: String(move.gen) || 'CAP',
 					};
 
-					const pastGensOnly = (move.isNonstandard === "Past" && dex.gen >= 8) ||
-						(move.isNonstandard === "Gigantamax" && dex.gen !== 8);
+					const pastGensOnly = (move.isNonstandard === "Past" && dex.gen >= 8);
 					if (pastGensOnly) details["&#10007; Past Gens Only"] = "";
-					if (move.secondary || move.secondaries || move.hasSheerForce) details["&#10003; Boosted by Sheer Force"] = "";
+					if (move.secondary || move.secondaries || move.hasSheerForceBoost) {
+						details["&#10003; Boosted by Sheer Force"] = "";
+					}
 					if (move.flags['contact'] && dex.gen >= 3) details["&#10003; Contact"] = "";
 					if (move.flags['sound'] && dex.gen >= 3) details["&#10003; Sound"] = "";
 					if (move.flags['bullet'] && dex.gen >= 6) details["&#10003; Bullet"] = "";
@@ -850,13 +862,19 @@ export const commands: Chat.ChatCommands = {
 				break;
 			case 'ability':
 				const ability = dex.abilities.get(newTarget.name);
-				buffer += `${prefix}${Chat.getDataAbilityHTML(ability)}\n`;
+				buffer += `${prefix}${Chat.getDataAbilityHTML(
+					ability, { dex, language: this.language, hideShortDescription: showDetails }
+				)}\n`;
 				if (showDetails) {
+					description = dex.text.get(ability, textLanguage).desc;
 					details = {
 						Gen: String(ability.gen) || 'CAP',
 					};
 					if (ability.flags['cantsuppress']) details["&#10003; Not affected by Gastro Acid"] = "";
 					if (ability.flags['breakable']) details["&#10003; Ignored by Mold Breaker"] = "";
+					if (ability.isNonstandard) {
+						details[`Unobtainable in Gen ${dex.gen}`] = "";
+					}
 				}
 				break;
 			default:
@@ -864,8 +882,11 @@ export const commands: Chat.ChatCommands = {
 			}
 
 			if (showDetails) {
+				if (description) {
+					buffer += `${prefix}${Utils.escapeHTML(description)}\n`;
+				}
 				buffer += `${prefix}<font size="1">${Object.entries(details).map(([detail, value]) => (
-					value === '' ? detail : `<font color="#686868">${detail}:</font> ${value}`
+					value === '' ? detail : `<span class="gray">${detail}:</span> ${value}`
 				)).join("&nbsp;|&ThickSpace;")}</font>\n`;
 			}
 		}
@@ -1788,8 +1809,8 @@ export const commands: Chat.ChatCommands = {
 			`- <a href="https://www.smogon.com/forums/threads/3676132/">Beginner's Guide to Pok&eacute;mon Showdown</a><br />` +
 			`- <a href="https://www.smogon.com/dp/articles/intro_comp_pokemon">An introduction to competitive Pok&eacute;mon</a><br />` +
 			`- <a href="https://www.smogon.com/sm/articles/sm_tiers">What do 'OU', 'UU', etc mean?</a><br />` +
-			`- <a href="https://www.smogon.com/dex/ss/formats/">What are the rules for each format?</a><br />` +
-			`- <a href="https://www.smogon.com/ss/articles/clauses">What is 'Sleep Clause' and other clauses?</a><br />` +
+			`- <a href="https://www.smogon.com/dex/sv/formats/">What are the rules for each format?</a><br />` +
+			`- <a href="https://www.smogon.com/sv/articles/clauses">What is 'Sleep Clause' and other clauses?</a><br />` +
 			`- <a href="https://www.smogon.com/articles/getting-started">Next Steps for Competitive Battling</a>`
 		);
 	},
@@ -2128,7 +2149,7 @@ export const commands: Chat.ChatCommands = {
 	],
 
 	faq(target, room, user) {
-		target = toID(target);
+		target = toID(this.splitOne(target)[0]);
 		const showAll = target === 'all';
 		if (showAll && this.shouldBroadcast()) {
 			throw new Chat.ErrorMessage(this.tr`You cannot broadcast all FAQs at once.`);

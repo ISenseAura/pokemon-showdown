@@ -185,7 +185,8 @@ export const commands: Chat.ChatCommands = {
 		try {
 			gitVersion = (await ProcessManager.exec(['git', 'rev-parse', '--short', 'HEAD'])).stdout.trim();
 		} catch {}
-		this.sendReplyBox(this.tr`Server version: <b>${version}${gitVersion ? ` (commit ${gitVersion})` : ''}</b>`);
+		this.sendReplyBox(this.tr`Server version: <b>${version}` +
+			`${gitVersion ? ` (commit <a href="https://github.com/smogon/pokemon-showdown/commits/${gitVersion}">${gitVersion}</a>)` : ''}</b>`);
 	},
 	versionhelp: [
 		`/version - Get the current server version.`,
@@ -339,11 +340,15 @@ export const commands: Chat.ChatCommands = {
 		this.checkRecursion();
 
 		const { targetUser, targetUsername, rest: message } = this.splitUser(target);
+		const isCommand = !!Chat.parseCommand(message);
 		if (targetUsername === '~') {
 			this.pmTarget = null;
 			this.room = null;
 		} else if (!targetUser) {
 			if (Chat.PrivateMessages.offlineIsEnabled) {
+				if (isCommand) {
+					return this.parse(`/offlinemsg ${targetUsername},${message}`);
+				}
 				if (user.lastCommand === 'pm') {
 					// don't delete lastCommand so they can just keep sending pms
 					return this.parse(`/offlinemsg ${targetUsername},${message}`);
@@ -359,11 +364,15 @@ export const commands: Chat.ChatCommands = {
 			return;
 		} else {
 			this.pmTarget = targetUser;
+			this.pmTargetName = targetUser.name;
 			this.room = null;
 		}
 
 		if (targetUser && !targetUser.connected) {
 			if (Chat.PrivateMessages.offlineIsEnabled) {
+				if (isCommand) {
+					return this.parse(`/offlinemsg ${targetUser.getLastId()},${message}`);
+				}
 				if (user.lastCommand === 'pm') {
 					// don't delete lastCommand so they can just keep sending pms
 					return this.parse(`/offlinemsg ${targetUser.getLastId()},${message}`);
@@ -378,7 +387,10 @@ export const commands: Chat.ChatCommands = {
 
 		return this.parse(message);
 	},
-	msghelp: [`/msg OR /whisper OR /w [username], [message] - Send a private message.`],
+	msghelp: [
+		`/msg OR /whisper OR /w [username], [message] - Send a private message.`,
+		`Commands sent to offline users run immediately, with replies displayed in that user's PM window.`,
+	],
 
 	offlinepm: 'offlinemsg',
 	opm: 'offlinemsg',
@@ -396,9 +408,6 @@ export const commands: Chat.ChatCommands = {
 		if (!userid || !message) {
 			return this.parse('/help offlinemsg');
 		}
-		if (Chat.parseCommand(message)) {
-			throw new Chat.ErrorMessage(`You cannot send commands in offline PMs.`);
-		}
 		if (userid === user.id) {
 			throw new Chat.ErrorMessage(`You cannot send offline PMs to yourself.`);
 		} else if (userid.startsWith('guest')) {
@@ -410,6 +419,12 @@ export const commands: Chat.ChatCommands = {
 		}
 		if (userid.length > 18) {
 			throw new Chat.ErrorMessage(`Invalid userid. Must be <=18 characters in length.`);
+		}
+		if (Chat.parseCommand(message)) {
+			this.room = null;
+			this.pmTarget = null;
+			this.pmTargetName = username;
+			return this.parse(message);
 		}
 		message = this.checkChat(message);
 		if (!message) return;
@@ -485,6 +500,11 @@ export const commands: Chat.ChatCommands = {
 	ignorepms: 'blockpms',
 	ignorepm: 'blockpms',
 	blockofflinepms: 'blockpms',
+	blockdms: 'blockpms',
+	blockdm: 'blockpms',
+	ignoredms: 'blockpms',
+	ignoredm: 'blockpms',
+	blockofflinedms: 'blockpms',
 	async blockpms(target, room, user, connection, cmd) {
 		target = target.toLowerCase().trim();
 		if (target === 'ac') target = 'autoconfirmed';
@@ -500,7 +520,7 @@ export const commands: Chat.ChatCommands = {
 		} else if (target === 'autoconfirmed' || target === 'trusted' || target === 'unlocked') {
 			if (!isOffline) user.settings.blockPMs = target;
 			target = this.tr(target);
-			this.sendReply(this.tr`You are now blocking ${msg}private messages, except from staff and ${target} users.`);
+			this.sendReply(this.tr`You are now blocking ${msg}private messages, except from staff, friends, and ${target} users.`);
 		} else if (target === 'friends') {
 			if (!isOffline) user.settings.blockPMs = target;
 			this.sendReply(this.tr`You are now blocking ${msg}private messages, except from staff and friends.`);
@@ -522,7 +542,7 @@ export const commands: Chat.ChatCommands = {
 	},
 	blockpmshelp: [
 		`/blockpms - Blocks private messages except from staff. Unblock them with /unblockpms.`,
-		`/blockpms [unlocked/ac/trusted/+/friends] - Blocks private messages except from staff and the specified group.`,
+		`/blockpms [unlocked, ac, trusted, friends, +] - Blocks PMs, except for staff, friends, and the specified group(s).`,
 	],
 
 	unblockpm: 'unblockpms',
@@ -675,9 +695,9 @@ export const commands: Chat.ChatCommands = {
 		if (!target) target = user.name;
 
 		const values = await Ladders.visualizeAll(target);
-		let buffer = `<div class="ladder"><table>`;
-		buffer += Utils.html`<tr><td colspan="8">User: <strong>${target}</strong></td></tr>`;
-
+		let buffer = `<div class="ladder">`;
+		buffer += Utils.html`<div>User: <strong>${target}</strong></div>`;
+		buffer += `<div style="overflow-x: auto;"><table>`;
 		const ratings = values.join(``);
 		if (!ratings) {
 			buffer += `<tr><td colspan="8"><em>${this.tr`This user has not played any ladder games yet.`}</em></td></tr>`;
@@ -685,8 +705,7 @@ export const commands: Chat.ChatCommands = {
 			buffer += `<tr><th>${this.tr`Format`}</th><th><abbr title="Elo rating">Elo</abbr></th><th>${this.tr`W`}</th><th>${this.tr`L`}</th><th>${this.tr`Total`}</th>`;
 			buffer += ratings;
 		}
-		buffer += `</table></div>`;
-
+		buffer += `</table></div></div>`;
 		this.sendReply(`|raw|${buffer}`);
 	},
 	rankhelp: [
@@ -724,21 +743,21 @@ export const commands: Chat.ChatCommands = {
 
 	language(target, room, user) {
 		if (!target) {
-			const language = Chat.languages.get(user.language || 'english' as ID);
+			const language = Chat.getLanguageName(user.language || 'english' as ID);
 			return this.sendReply(this.tr`Currently, you're viewing Pokémon Showdown in ${language}.`);
 		}
 		const languageID = toID(target);
 		if (!Chat.languages.has(languageID)) {
-			const languages = [...Chat.languages.values()].join(', ');
+			const languages = [...Chat.languages].map(([id]) => Chat.getLanguageName(id)).join(', ');
 			throw new Chat.ErrorMessage(this.tr`Valid languages are: ${languages}`);
 		}
 		user.language = languageID;
 		user.update();
 		const languageName = Chat.languages.get(languageID);
 		const langRoom = Rooms.search(languageName || "");
-		let language = languageName;
+		let language = Chat.getLanguageName(languageID);
 		if (langRoom) {
-			language = `<a href="/${langRoom.roomid}">${languageName}</a>`;
+			language = `<a href="/${langRoom.roomid}">${language}</a>`;
 		}
 		return this.sendReply(
 			`|html|` + this.tr`Pokémon Showdown will now be displayed in ${language} (except in language rooms).`
@@ -757,6 +776,7 @@ export const commands: Chat.ChatCommands = {
 			if (typeof raw !== 'object' || Array.isArray(raw) || !raw) {
 				this.errorReply(this.tr`/updatesettings expects JSON encoded object.`);
 			}
+			if (typeof raw.avatar === 'string') this.parse(`/noreply /avatar ${raw.avatar}`);
 			if (typeof raw.language === 'string') this.parse(`/noreply /language ${raw.language}`);
 			for (const setting in user.settings) {
 				if (setting in raw) {
@@ -869,7 +889,7 @@ export const commands: Chat.ChatCommands = {
 			this.sendReply(this.tr`Battle input log re-requested.`);
 		}
 	},
-	exportinputloghelp: [`/exportinputlog - Asks players in a battle for permission to export an inputlog. Requires: ~`],
+	exportinputloghelp: [`/exportinputlog - Asks players in a battle for permission to export an inputlog. Requires: + % @ ~`],
 
 	importinputlog(target, room, user, connection) {
 		this.checkCan('importinputlog');
@@ -925,7 +945,9 @@ export const commands: Chat.ChatCommands = {
 			}
 		}
 
-		let resultString = Utils.escapeHTML(Teams.export(team, { hideStats }));
+		let resultString = Utils.escapeHTML(Teams.export(team, {
+			hideStats, useStatPoints: toID(battle.format).includes('champions'),
+		}));
 		if (showAll) {
 			resultString = `<details><summary>${this.tr`View team`}</summary>${resultString}</details>`;
 		}
@@ -1266,6 +1288,7 @@ export const commands: Chat.ChatCommands = {
 		const fromUser = Ladders.challenges.accept(this);
 
 		this.pmTarget = fromUser;
+		this.pmTargetName = fromUser.name;
 		this.sendChatMessage(`/text You accepted the battle invite`);
 		this.parse(`/join ${targetRoom.roomid}`);
 		battle.joinGame(user, slot, playerOpts);
@@ -1559,7 +1582,8 @@ export const commands: Chat.ChatCommands = {
 		const { targetUser, targetUsername, rest } = this.splitUser(target);
 		if (rest) return this.popupReply(this.tr`This command does not support specifying multiple users`);
 		this.pmTarget = targetUser || this.pmTarget;
-		if (!this.pmTarget) return this.popupReply(this.tr`User "${targetUsername}" not found.`);
+		this.pmTargetName = targetUsername || this.pmTargetName;
+		if (!this.pmTarget) return this.popupReply(this.tr`User "${this.pmTargetName || ''}" not found.`);
 
 		const chall = Ladders.challenges.search(user.id, this.pmTarget.id);
 		if (!chall || chall.from !== user.id) {
@@ -1578,7 +1602,8 @@ export const commands: Chat.ChatCommands = {
 		const { targetUser, targetUsername, rest } = this.splitUser(target);
 		if (rest) return this.popupReply(this.tr`This command does not support specifying multiple users`);
 		this.pmTarget = targetUser || this.pmTarget;
-		if (!this.pmTarget) return this.popupReply(this.tr`User "${targetUsername}" not found.`);
+		this.pmTargetName = targetUsername || this.pmTargetName;
+		if (!this.pmTarget) return this.popupReply(this.tr`User "${this.pmTargetName || ''}" not found.`);
 
 		const chall = Ladders.challenges.search(user.id, this.pmTarget.id);
 		if (!chall || chall.to !== user.id) {
@@ -1600,7 +1625,8 @@ export const commands: Chat.ChatCommands = {
 		const { targetUser, targetUsername, rest } = this.splitUser(target);
 		if (rest) return this.popupReply(this.tr`This command does not support specifying multiple users`);
 		this.pmTarget = targetUser || this.pmTarget;
-		if (!this.pmTarget) return this.popupReply(this.tr`User "${targetUsername}" not found.`);
+		this.pmTargetName = targetUsername || this.pmTargetName;
+		if (!this.pmTarget) return this.popupReply(this.tr`User "${this.pmTargetName || ''}" not found.`);
 
 		const chall = Ladders.challenges.search(user.id, this.pmTarget.id);
 		if (!chall || chall.to !== user.id) {

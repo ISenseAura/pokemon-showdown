@@ -38,6 +38,8 @@ import {
 	start as startBattleProcesses,
 } from "./room-battle";
 import { BestOfGame } from './room-battle-bestof';
+import { RoomTcg, start as startTcgProcesses } from './room-tcg';
+import { isTcgFormat } from './tcg';
 import { RoomGame, SimpleRoomGame, RoomGamePlayer } from './room-game';
 import { MinorActivity, type MinorActivityData } from './room-minor-activity';
 import { Roomlogs, type Roomlog } from './roomlogs';
@@ -301,7 +303,7 @@ export abstract class BasicRoom {
 		if (!options.isPersonal) this.persist = true;
 
 		this.minorActivity = null;
-		this.minorActivityQueue = null;
+		this.minorActivityQueue = this.settings.minorActivityQueue || null;
 		if (options.parentid) {
 			this.setParent(Rooms.get(options.parentid) || null);
 		}
@@ -532,6 +534,7 @@ export abstract class BasicRoom {
 		if (!this.minorActivityQueue) this.minorActivityQueue = [];
 		this.minorActivityQueue.push(activity);
 		this.settings.minorActivityQueue = this.minorActivityQueue;
+		this.saveSettings();
 	}
 	clearMinorActivityQueue(slot?: number, depth = 1) {
 		if (!this.minorActivityQueue) return;
@@ -824,7 +827,7 @@ export abstract class BasicRoom {
 		// this doesn't update parentid or subroom user symbols because it's
 		// intended to be used for cleanup only
 	}
-	setPrivate(privacy: PrivacySetting) {
+	setPrivate(privacy: PrivacySetting, password?: string) {
 		this.settings.isPrivate = privacy;
 		this.saveSettings();
 
@@ -841,10 +844,12 @@ export abstract class BasicRoom {
 			if (privacy) {
 				if (this.roomid.endsWith('pw')) return true;
 
-				// This is the same password generation approach as genPassword in the client replays.lib.php
-				// but obviously will not match given mt_rand there uses a different RNG and seed.
-				let password = '';
-				for (let i = 0; i < 31; i++) password += ALPHABET[crypto.randomInt(0, ALPHABET.length - 1)];
+				if (!password) {
+					// This is the same password generation approach as genPassword in the client replays.lib.php
+					// but obviously will not match given mt_rand there uses a different RNG and seed.
+					password = '';
+					for (let i = 0; i < 31; i++) password += ALPHABET[crypto.randomInt(0, ALPHABET.length - 1)];
+				}
 
 				this.rename(this.title, `${this.roomid}-${password}pw` as RoomID, true);
 			} else {
@@ -1309,6 +1314,7 @@ export class GlobalRoomState {
 	start(processCount: SubProcessesConfig) {
 		void this.loadBattles();
 		startBattleProcesses(processCount);
+		startTcgProcesses(processCount);
 	}
 
 	async serializeBattleRoom(room: Room) {
@@ -1496,6 +1502,7 @@ export class GlobalRoomState {
 			// 32 was previously used for Multi Battles
 			if (format.bestOfDefault) displayCode |= 64;
 			if (format.teraPreviewDefault) displayCode |= 128;
+			if (format.itemClauseDefault) displayCode |= 256;
 			this.formatList += ',' + displayCode.toString(16);
 		}
 		return this.formatList;
@@ -1547,9 +1554,9 @@ export class GlobalRoomState {
 			if (room.type !== 'battle') continue;
 			if (formatFilter && formatFilter !== room.format) continue;
 			if (eloFilter && (!room.rated || room.rated < eloFilter)) continue;
-			if (usernameFilter && room.battle) {
-				const p1userid = room.battle.p1.id;
-				const p2userid = room.battle.p2.id;
+			if (usernameFilter) {
+				const p1userid = room.battle?.p1.id || room.game?.players[0]?.id;
+				const p2userid = room.battle?.p2.id || room.game?.players[1]?.id;
 				if (!p1userid || !p2userid) continue;
 				if (!p1userid.startsWith(usernameFilter) && !p2userid.startsWith(usernameFilter)) continue;
 			}
@@ -1563,6 +1570,12 @@ export class GlobalRoomState {
 			if (room.active && room.battle) {
 				if (room.battle.p1) roomData.p1 = room.battle.p1.name;
 				if (room.battle.p2) roomData.p2 = room.battle.p2.name;
+				if (room.tour) roomData.minElo = 'tour';
+				if (room.rated) roomData.minElo = Math.floor(room.rated);
+			} else if (room.active && room.game?.gameid === 'tcg') {
+				const [p1, p2] = room.game.players;
+				if (p1) roomData.p1 = p1.name;
+				if (p2) roomData.p2 = p2.name;
 				if (room.tour) roomData.minElo = 'tour';
 				if (room.rated) roomData.minElo = Math.floor(room.rated);
 			}
@@ -1673,7 +1686,7 @@ export class GlobalRoomState {
 		for (const player of players) {
 			Chat.runHandlers('onBattleStart', player, room);
 		}
-		Chat.runHandlers('onBattleCreate', room.battle!, players.map(x => x.id));
+		if (room.battle) Chat.runHandlers('onBattleCreate', room.battle, players.map(x => x.id));
 	}
 
 	deregisterChatRoom(id: string) {
@@ -2067,7 +2080,7 @@ export class GameRoom extends BasicRoom {
 			options === 'forpunishment' || (this as any).unlistReplay ? 2 :
 			isPrivate ? 1 :
 			0;
-		if (isPrivate && hidden === 10) {
+		if (isPrivate && hidden !== 2) {
 			password = (battle.password ||= Replays.generatePassword());
 		}
 		if (battle.replaySaved !== true && hidden === 10) {
@@ -2263,8 +2276,10 @@ export const Rooms = {
 			return Rooms.rooms.get(roomid) as GameRoom;
 		}
 		const room = Rooms.createGameRoom(roomid, roomTitle, options);
-		let game: RoomBattle | BestOfGame;
-		if (options.isBestOfSubBattle || !isBestOf) {
+		let game: RoomBattle | BestOfGame | RoomTcg;
+		if (isTcgFormat(format)) {
+			game = new RoomTcg(room, options);
+		} else if (options.isBestOfSubBattle || !isBestOf) {
 			game = new RoomBattle(room, options);
 		} else {
 			game = new BestOfGame(room, options);
@@ -2305,6 +2320,7 @@ export const Rooms = {
 	Roomlogs,
 
 	RoomBattle,
+	RoomTcg,
 	BestOfGame,
 	RoomBattlePlayer,
 	RoomBattleTimer,

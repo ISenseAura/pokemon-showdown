@@ -51,7 +51,7 @@ export class FailureMessage extends Error {
 	}
 }
 
-export function sendPM(message: string, to: string, from = '~') {
+export function sendPM(message: string, to: string, from: string) {
 	const senderID = toID(from);
 	const receiverID = toID(to);
 	const sendingUser = Users.get(senderID);
@@ -167,7 +167,7 @@ export class FriendsDatabase {
 	}
 	private async query(input: DatabaseRequest) {
 		const process = PM.acquire();
-		if (!process || !Config.usesqlite) {
+		if (!process || !Config.usesqlite || !Config.usesqlitefriends) {
 			return null;
 		}
 		const result = await process.query(input);
@@ -206,13 +206,14 @@ export class FriendsDatabase {
 		}
 		sendPM(
 			`/nonotify You sent a friend request to ${receiver?.connected ? receiver.name : receiverID}!`,
-			user.name
+			user.name,
+			receiverID
 		);
 		sendPM(
 			`/uhtml undo-${receiverID},<button class="button" name="send" value="/friends undorequest ${Utils.escapeHTML(receiverID)}">` +
-			`<i class="fa fa-undo"></i> Undo</button>`, user.name
+			`<i class="fa fa-undo"></i> Undo</button>`, user.name, receiverID
 		);
-		sendPM(disclaimer, user.id);
+		sendPM(disclaimer, user.id, receiverID);
 		return result;
 	}
 	async removeRequest(receiverID: ID, senderID: ID) {
@@ -431,7 +432,7 @@ export const PM = new ProcessManager.QueryProcessManager<DatabaseRequest, Databa
 
 if (!PM.isParentProcess) {
 	ConfigLoader.ensureLoaded();
-	if (Config.usesqlite) {
+	if (Config.usesqlite && Config.usesqlitefriends) {
 		FriendsDatabase.setupDatabase();
 	}
 	global.Monitor = {

@@ -132,12 +132,6 @@ describe('Dex data', () => {
 			const entry = Items[itemid];
 			assert.equal(toID(entry.name), itemid, `Mismatched Item key "${itemid}" of "${entry.name}"`);
 			assert.equal(typeof entry.num, 'number', `Item ${entry.name} should have a number`);
-			if (entry.megaStone) {
-				assert.equal(typeof entry.megaStone, typeof entry.megaEvolves, `Item ${entry.name} megaStone and megaEvolves should both be the same type`);
-				if (Array.isArray(entry.megaStone)) {
-					assert.equal(entry.megaStone.length, entry.megaEvolves.length, `Item ${entry.name} megaStone and megaEvolves arrays should be the same length`);
-				}
-			}
 		}
 	});
 
@@ -242,8 +236,8 @@ describe('Dex data', () => {
 
 	it('should have valid Learnsets entries', function () {
 		this.timeout(0);
-		const mods = [Dex.mod('gen2'), Dex.mod('gen7letsgo'), Dex.mod('gen8bdsp'), Dex.mod('gen8legends'), Dex.mod('gen9legends'), Dex];
-		for (const mod of mods) {
+		const dexes = [Dex.mod('gen2'), Dex.mod('gen7letsgo'), Dex.mod('gen8bdsp'), Dex.mod('gen8legends'), Dex.mod('gen9legends'), Dex.mod('champions'), Dex];
+		for (const mod of dexes) {
 			for (const speciesid in mod.data.Learnsets) {
 				const species = Dex.species.get(speciesid);
 				assert.equal(speciesid, species.id, `Key "${speciesid}" in Learnsets should be a Species ID`);
@@ -253,7 +247,7 @@ describe('Dex data', () => {
 				for (const moveid in entry.learnset) {
 					const move = Dex.moves.get(moveid);
 					assert.equal(moveid, move.id, `Move key "${moveid}" of Learnsets entry ${species.name} should be a Move ID`);
-					assert(move.exists && !move.realMove, `Move key "${moveid}" of Learnsets entry ${species.name} should be a real move`);
+					assert(move.exists && !move.placeholderFor, `Move key "${moveid}" of Learnsets entry ${species.name} should be a real move`);
 
 					let prevLearnedGen = 10;
 					let prevLearnedTypeIndex = -1;
@@ -320,7 +314,7 @@ describe('Dex data', () => {
 		const count = { species: 0, formes: 0 };
 		for (const pkmn of dex.species.all()) {
 			if (!existenceFunction(pkmn)) continue;
-			if (pkmn.isCosmeticForme) continue;
+			if (pkmn.isCosmeticForme || pkmn.placeholderFor) continue;
 			if (pkmn.name !== pkmn.baseSpecies) {
 				count.formes++;
 			} else {
@@ -407,11 +401,11 @@ describe('Dex data', () => {
 	// Shaymin (1) + Therian (4) + Hisui (16) + Basculin (1) + Basculegion (1)
 	formes['gen8legends'] = 1 + 1 + 2 + 1 + 5 + 3 + 17 + 1 + 4 + 16 + 1 + 1;
 	species['gen9legends'] = 232 + 132; // Lumiose Pokedex + Hyperspace Pokedex
-	// Mega (90) + Primal (2) + Rotom (5) + Keldeo (1) + Meloetta (1) + Genesect (4) + Vivillon (2) + Floette (1) +
-	// Meowstic (1) + Aegislash (1) + Pumpkaboo (3) + Gourgeist (3) + Zygarde (2) + Mimikyu (1) + Magearna (1) +
-	// Alola (4) + Toxtricity (1) + Indeedee (1) + Morpeko (1) + Galar (8) + Hisui (1) + Squawkabilly (3) +
+	// Mega (96) + Primal (2) + Rotom (5) + Keldeo (1) + Meloetta (1) + Genesect (4) + Vivillon (2) + Floette (1) +
+	// Meowstic (1) + Aegislash (1) + Pumpkaboo (3) + Gourgeist (3) + Zygarde (2) + Mimikyu (1) +
+	// Alola (4) + Toxtricity (1) + Indeedee (1) + Morpeko (1) + Galar (8) + Hisui (4) + Squawkabilly (3) +
 	// Tatsugiri (2) + Gimmighoul (1) + Hoopa (1)
-	formes['gen9legends'] = 92 + 2 + 5 + 1 + 1 + 4 + 2 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 4 + 1 + 1 + 1 + 8 + 1 + 3 + 2 + 1 + 1;
+	formes['gen9legends'] = 96 + 2 + 5 + 1 + 1 + 4 + 2 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 4 + 1 + 1 + 1 + 8 + 4 + 3 + 2 + 1 + 1;
 
 	for (const mod of ['gen7letsgo', 'gen8bdsp', 'gen8legends', 'gen9legends']) {
 		it(`${mod} should have ${species[mod]} species and ${formes[mod]} formes`, () => {

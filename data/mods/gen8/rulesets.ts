@@ -2,19 +2,22 @@ export const Rulesets: import('../../../sim/dex-formats').ModdedFormatDataTable 
 	standard: {
 		inherit: true,
 		ruleset: [
-			'Obtainable', 'Team Preview', 'Sleep Clause Mod', 'Species Clause', 'Nickname Clause', 'OHKO Clause', 'Evasion Items Clause', 'Evasion Moves Clause', 'Endless Battle Clause', 'HP Percentage Mod', 'Cancel Mod',
+			'Standard AG',
+			'Sleep Clause Mod', 'Species Clause', 'Nickname Clause', 'OHKO Clause', 'Evasion Items Clause', 'Evasion Moves Clause',
 		],
 	},
 	standarddoubles: {
 		inherit: true,
 		ruleset: [
-			'Obtainable', 'Team Preview', 'Species Clause', 'Nickname Clause', 'OHKO Clause', 'Evasion Moves Clause', 'Gravity Sleep Clause', 'Endless Battle Clause', 'HP Percentage Mod', 'Cancel Mod',
+			'Standard AG',
+			'Species Clause', 'Nickname Clause', 'OHKO Clause', 'Evasion Moves Clause', 'Gravity Sleep Clause',
 		],
 	},
 	standardoms: {
 		inherit: true,
 		ruleset: [
-			'Obtainable', 'Team Preview', 'Species Clause', 'Nickname Clause', 'OHKO Clause', 'Evasion Moves Clause', 'Endless Battle Clause', 'Dynamax Clause', 'HP Percentage Mod', 'Cancel Mod', 'Overflow Stat Mod',
+			'Standard AG',
+			'Species Clause', 'Nickname Clause', 'OHKO Clause', 'Evasion Moves Clause', 'Dynamax Clause', 'Overflow Stat Mod',
 		],
 	},
 	teampreview: {
@@ -84,6 +87,7 @@ export const Rulesets: import('../../../sim/dex-formats').ModdedFormatDataTable 
 	},
 	godlygiftmod: {
 		inherit: true,
+		desc: "Each Pok&eacute;mon receives one base stat from a God (Uber Pok&eacute;mon) depending on its position in the team. If there is no Uber Pok&eacute;mon, it uses the Pok&eacute;mon in the first slot.",
 		onValidateTeam(team) {
 			const gods = new Set<string>();
 			for (const set of team) {
@@ -92,10 +96,10 @@ export const Rulesets: import('../../../sim/dex-formats').ModdedFormatDataTable 
 				if (["Zacian", "Zamazenta"].includes(species.baseSpecies) && this.toID(set.item).startsWith('rusted')) {
 					species = this.dex.species.get(set.species + "-Crowned");
 				}
-				if (set.item && this.dex.items.get(set.item).megaStone) {
+				if (set.item) {
 					const item = this.dex.items.get(set.item);
-					if (item.megaEvolves === species.baseSpecies) {
-						species = this.dex.species.get(Array.isArray(item.megaStone) ? item.megaStone[0] : item.megaStone);
+					if (item.megaStone?.[species.baseSpecies]) {
+						species = this.dex.species.get(item.megaStone[species.baseSpecies]);
 					}
 				}
 				if (
@@ -123,8 +127,8 @@ export const Rulesets: import('../../../sim/dex-formats').ModdedFormatDataTable 
 				}
 				if (set.item) {
 					const item = this.dex.items.get(set.item);
-					if (item.megaEvolves === set.species) {
-						godSpecies = this.dex.species.get(Array.isArray(item.megaStone) ? item.megaStone[0] : item.megaStone);
+					if (item.megaStone?.[set.species]) {
+						godSpecies = this.dex.species.get(item.megaStone[set.species]);
 					}
 					if (["Zacian", "Zamazenta"].includes(godSpecies.baseSpecies) && item.id.startsWith('rusted')) {
 						godSpecies = this.dex.species.get(set.species + "-Crowned");
@@ -133,7 +137,7 @@ export const Rulesets: import('../../../sim/dex-formats').ModdedFormatDataTable 
 				const isBanned = validator.isBannedSpecies(godSpecies);
 				return isBanned;
 			}) || target.side.team[0];
-			const stat = Dex.stats.ids()[target.side.team.indexOf(target.set)];
+			const stat = this.dex.stats.ids()[target.side.team.indexOf(target.set)];
 			const newSpecies = this.dex.deepClone(species);
 			let godSpecies = this.dex.species.get(god.species);
 			if (typeof godSpecies.battleOnly === 'string') {

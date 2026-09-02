@@ -156,7 +156,7 @@ describe('Team Validator', () => {
 		const team = [
 			{ species: 'smeargle', ability: 'owntempo', moves: ['bellydrum', 'spore', 'sketch'], evs: { hp: 1 } },
 		];
-		assert.legalTeam(team, 'gen4ou');
+		assert.legalTeam(team, 'gen4anythinggoes');
 	});
 
 	it('should accept both ability types for Mega Evolutions', () => {
@@ -184,12 +184,20 @@ describe('Team Validator', () => {
 		assert.false.legalTeam(team, 'gen1ou');
 	});
 
+	it('should reject Max moves added directly to a Pokemon\'s moveset', () => {
+		const team = [
+			{ species: 'charizard', ability: 'blaze', moves: ['maxflare'], evs: { hp: 1 } },
+		];
+		assert.false.legalTeam(team, 'gen8anythinggoes');
+		assert.false.legalTeam(team, 'gen8customgame@@@-obtainable');
+	});
+
 	it('should reject exclusive G-Max moves added directly to a Pokemon\'s moveset', () => {
 		const team = [
 			{ species: 'charizard', ability: 'blaze', moves: ['gmaxwildfire'], evs: { hp: 1 }, gigantamax: true },
 		];
 		assert.false.legalTeam(team, 'gen8anythinggoes');
-		assert.false.legalTeam(team, 'gen8customgame@@@-nonexistent');
+		assert.false.legalTeam(team, 'gen8customgame@@@-obtainable');
 	});
 
 	it('should reject Gmax Pokemon from formats with Dynamax Clause', () => {
