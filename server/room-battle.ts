@@ -489,6 +489,8 @@ export interface RoomBattleOptions {
 	ratedMessage?: string;
 	seed?: PRNGSeed;
 	roomid?: RoomID;
+	/** TCG ladder: second seat is played by the WaveTCG CPU. */
+	cpu?: boolean;
 	/** For battles restored after a restart */
 	delayedTimer?: boolean;
 	/**

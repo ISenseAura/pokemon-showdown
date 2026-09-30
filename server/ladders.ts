@@ -403,6 +403,23 @@ class Ladder extends LadderStore {
 	 */
 	addSearch(newSearch: BattleReady, user: User) {
 		const formatid = newSearch.formatid;
+		// TCG ladder games are vs the CPU — don't wait for another human.
+		if (isTcgFormat(formatid)) {
+			Rooms.createBattle({
+				format: formatid,
+				rated: 0,
+				challengeType: newSearch.challengeType,
+				cpu: true,
+				players: [{
+					user,
+					team: newSearch.settings.team,
+					rating: newSearch.rating,
+					hidden: newSearch.settings.hidden,
+					inviteOnly: newSearch.settings.inviteOnly,
+				}],
+			});
+			return;
+		}
 		let formatTable = Ladders.searches.get(formatid);
 		if (!formatTable) {
 			formatTable = {
