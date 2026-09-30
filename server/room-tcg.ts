@@ -119,11 +119,18 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		const rules = parseFormat(tcgRulesId(this.formatid));
 		let deck1: string[];
 		let deck2: string[];
-		if (rules.assignedDeck) {
-			[deck1, deck2] = rollAssignedDeckPair(rules.id, this.seed);
-		} else {
-			deck1 = this.seats.p1.deck.length ? this.seats.p1.deck : buildSampleDeck(rules.id, 'grass');
-			deck2 = this.seats.p2.deck.length ? this.seats.p2.deck : buildSampleDeck(rules.id, 'fire');
+		try {
+			if (rules.assignedDeck) {
+				[deck1, deck2] = rollAssignedDeckPair(rules.id, this.seed);
+			} else {
+				deck1 = this.seats.p1.deck.length ? this.seats.p1.deck : buildSampleDeck(rules.id, 'grass');
+				deck2 = this.seats.p2.deck.length ? this.seats.p2.deck : buildSampleDeck(rules.id, 'fire');
+			}
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			this.push(`update\n|html|<div class="broadcast-red"><b>Could not build TCG decks</b><br />${Utils.escapeHTML(message)}</div>`);
+			this.push(`end\n${JSON.stringify({ winner: '', inputLog: [] })}`);
+			return;
 		}
 		const v1 = validateDeck(deck1, rules.id);
 		const v2 = validateDeck(deck2, rules.id);
