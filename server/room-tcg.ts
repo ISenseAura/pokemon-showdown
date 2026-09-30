@@ -13,11 +13,11 @@ import { parseTcgDeck, tcgRulesId } from './tcg';
 import type { TcgAction, TcgEvent, TcgSnapshot } from '../Wave-TCG/types';
 import { decodeAction } from '../Wave-TCG/protocol/encode';
 import {
-	PokemonTcg, buildSampleDeck, loadCatalog, packGame, parseFormat, rollAssignedDeckPair, validateDeck,
+	PokemonTcg, buildSampleDeck, chooseAction, loadCatalog, packGame, parseFormat, rollAssignedDeckPair, validateDeck,
 } from '../Wave-TCG';
 
 type TcgSlot = 'p1' | 'p2';
-type TcgSeat = { id: string, name: string, deck: string[] };
+type TcgSeat = { id: string, name: string, deck: string[], cpu?: boolean };
 
 /**
  * Host wire per Wave-TCG docs/events.md:
@@ -30,6 +30,8 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 	roomid = '';
 	seed: number | undefined;
 	private seats: Partial<Record<TcgSlot, TcgSeat>> = {};
+	private cpuSlots = new Set<TcgSlot>();
+	private cpuTimer: NodeJS.Timeout | null = null;
 	private lastTurn = 0;
 
 	override _write(chunk: string) {
@@ -62,6 +64,14 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 			this.seed = opts.seed;
 			break;
 		}
+		case 'cpu': {
+			const slot = message.trim() as TcgSlot;
+			this.cpuSlots.add(slot);
+			const seat = this.seats[slot];
+			if (seat) seat.cpu = true;
+			this.scheduleCpu();
+			break;
+		}
 		case 'player': {
 			const sp = message.indexOf(' ');
 			const slot = (sp < 0 ? message : message.slice(0, sp)) as TcgSlot;
@@ -76,6 +86,7 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 				id: data.id || slot,
 				name: data.name,
 				deck: parsed.ok ? parsed.deck : [],
+				cpu: this.cpuSlots.has(slot),
 			};
 			this.tryBegin();
 			break;
@@ -138,6 +149,7 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		);
 		// Construction fills lastEvents (start / first / deal / request).
 		this.pushBatch(this.game.lastEvents);
+		this.scheduleCpu();
 	}
 
 	private doAct(slot: TcgSlot, action: TcgAction) {
@@ -154,6 +166,34 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		}
 		this.pushBatch(result.events);
 		if (this.game.status === 'over') this.emitEnd();
+		else this.scheduleCpu();
+	}
+
+	private cpuToMove(): TcgSlot | null {
+		if (!this.game || this.game.status === 'over') return null;
+		for (const slot of ['p1', 'p2'] as const) {
+			const seat = this.seats[slot];
+			if (!seat?.cpu) continue;
+			if (this.game.legalActions(seat.id).length) return slot;
+		}
+		return null;
+	}
+
+	private scheduleCpu() {
+		if (this.cpuTimer || !this.cpuToMove()) return;
+		this.cpuTimer = setTimeout(() => {
+			this.cpuTimer = null;
+			this.playCpu();
+		}, 600);
+	}
+
+	private playCpu() {
+		const slot = this.cpuToMove();
+		if (!slot || !this.game) return;
+		const seat = this.seats[slot]!;
+		const action = chooseAction(this.game, seat.id);
+		if (!action) return;
+		this.doAct(slot, action);
 	}
 
 	/** Forward one act/construction batch: filtered events + snapshot resync. */
@@ -267,10 +307,17 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 			`Play with <code>/choose {JSON TcgAction}</code>. ${randomNote}</div>`
 		);
 
-		for (let i = 0; i < 2; i++) {
+		for (let i = 0; i < options.players.length; i++) {
 			const p = options.players[i];
 			const player = this.addPlayer(p?.user || null, p || null);
 			if (!player) throw new Error(`failed to create TCG player ${i + 1} in ${room.roomid}`);
+		}
+		if (options.cpu && options.players.length < 2) {
+			const cpu = this.addPlayer('CPU', { team: '' } as RoomBattlePlayerOptions);
+			if (cpu) {
+				void this.stream.write(`>cpu ${cpu.slot}`);
+				this.room.add(`|player|${cpu.slot}|CPU|1|`);
+			}
 		}
 		this.room.title = `${this.p1.name} vs ${this.p2.name}`;
 		this.room.send(`|title|${this.room.title}`);
