@@ -13,7 +13,7 @@ import { parseTcgDeck, tcgRulesId } from './tcg';
 import type { TcgAction, TcgEvent, TcgSnapshot } from '../Wave-TCG/types';
 import { decodeAction } from '../Wave-TCG/protocol/encode';
 import {
-	PokemonTcg, buildSampleDeck, chooseAction, loadCatalog, packGame, parseFormat, rollAssignedDeckPair, validateDeck,
+	PokemonTcg, autoDeck, buildSampleDeck, chooseAction, loadCatalog, packGame, parseFormat, rollAssignedDeckPair, validateDeck,
 } from '../Wave-TCG';
 
 type TcgSlot = 'p1' | 'p2';
@@ -116,15 +116,32 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		if (this.game || !this.seats.p1 || !this.seats.p2) return;
 		loadCatalog();
 		process.env.PTCG_PROTOCOL_LOG = '0';
-		const rules = parseFormat(tcgRulesId(this.formatid));
+		const rulesId = tcgRulesId(this.formatid);
+		const rules = parseFormat(rulesId);
 		let deck1: string[];
 		let deck2: string[];
+		const baseSeed = this.seed || 1;
+		const sample = (existing: string[], type: 'grass' | 'fire', seed: number) => {
+			if (existing.length) return existing;
+			try {
+				return buildSampleDeck(rules.id, type);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				if (!/No .+ Pokemon in/.test(message)) throw err;
+				return autoDeck(rules.id, { seed, anyCard: true });
+			}
+		};
 		try {
+			// *random ids assign decks even when this checkout's format list
+			// still resolves them to the base format (Standard).
 			if (rules.assignedDeck) {
 				[deck1, deck2] = rollAssignedDeckPair(rules.id, this.seed);
+			} else if (rulesId.endsWith('random')) {
+				deck1 = autoDeck(rules.id, { seed: baseSeed, anyCard: true });
+				deck2 = autoDeck(rules.id, { seed: baseSeed + 7919, anyCard: true });
 			} else {
-				deck1 = this.seats.p1.deck.length ? this.seats.p1.deck : buildSampleDeck(rules.id, 'grass');
-				deck2 = this.seats.p2.deck.length ? this.seats.p2.deck : buildSampleDeck(rules.id, 'fire');
+				deck1 = sample(this.seats.p1.deck, 'grass', baseSeed);
+				deck2 = sample(this.seats.p2.deck, 'fire', baseSeed + 7919);
 			}
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
