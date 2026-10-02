@@ -1167,26 +1167,32 @@ export const commands: Chat.ChatCommands = {
 
 	uploadreplay: 'savereplay',
 	async savereplay(target, room, user, connection) {
-		if (!room?.battle) {
+		const tcg = room?.game?.gameid === 'tcg' ? room.game as import('../room-tcg').RoomTcg : null;
+		if (!room?.battle && !tcg) {
 			throw new Chat.ErrorMessage(this.tr`You can only save replays for battles.`);
 		}
 
 		const options = (target === 'forpunishment' || target === 'silent') ? target : undefined;
-		await room.uploadReplay(user, connection, options);
+		if (tcg) {
+			await tcg.uploadReplay(user, connection, options);
+		} else {
+			await (room as Rooms.GameRoom).uploadReplay(user, connection, options);
+		}
 	},
 	savereplayhelp: [`/savereplay - Saves the replay for the current battle.`],
 
 	hidereplay(target, room, user, connection) {
-		if (!room?.battle) throw new Chat.ErrorMessage(`Must be used in a battle.`);
-		this.checkCan('joinbattle', null, room);
-		if (room.tour?.forcePublic) {
+		const tcg = room?.game?.gameid === 'tcg' ? room.game as import('../room-tcg').RoomTcg : null;
+		if (!room?.battle && !tcg) throw new Chat.ErrorMessage(`Must be used in a battle.`);
+		this.checkCan('joinbattle', null, room!);
+		if (room!.tour?.forcePublic) {
 			throw new Chat.ErrorMessage(this.tr`This battle can't have hidden replays, because the tournament is set to be forced public.`);
 		}
-		if (room.hideReplay) throw new Chat.ErrorMessage(this.tr`The replay for this battle is already set to hidden.`);
-		room.hideReplay = true;
+		if (room!.hideReplay) throw new Chat.ErrorMessage(this.tr`The replay for this battle is already set to hidden.`);
+		room!.hideReplay = true;
 		// If a replay has already been saved, /savereplay again to update the uploaded replay's hidden status
-		if (room.battle.replaySaved) this.parse('/savereplay');
-		this.addModAction(room.tr`${user.name} hid the replay of this battle.`);
+		if (room!.battle?.replaySaved || tcg?.replaySaved) this.parse('/savereplay');
+		this.addModAction(room!.tr`${user.name} hid the replay of this battle.`);
 	},
 	hidereplayhelp: [`/hidereplay - Hides the replay of the current battle. Requires: ${Users.PLAYER_SYMBOL} ~`],
 
