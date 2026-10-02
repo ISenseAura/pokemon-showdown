@@ -15,9 +15,152 @@ import { decodeAction } from '../Wave-TCG/protocol/encode';
 import {
 	PokemonTcg, autoDeck, buildSampleDeck, chooseAction, loadCatalog, packGame, parseFormat, rollAssignedDeckPair, validateDeck,
 } from '../Wave-TCG';
+import { Replays } from './replays';
 
 type TcgSlot = 'p1' | 'p2';
 type TcgSeat = { id: string, name: string, deck: string[], cpu?: boolean };
+
+const TICK_TIME = 5;
+const SECONDS = 1000;
+const STARTING_TIME = 150;
+const MAX_TURN_TIME = 150;
+const TIMER_COOLDOWN = 20 * SECONDS;
+
+function requestIsWaiting(request: string): boolean {
+	if (!request) return true;
+	try {
+		const data = JSON.parse(request) as { wait?: boolean, actions?: unknown[] };
+		if (data.wait != null) return !!data.wait;
+		return !data.actions?.length;
+	} catch {
+		return true;
+	}
+}
+
+/** Inactivity timer for TCG — same `/timer` surface as RoomBattleTimer. */
+export class RoomTcgTimer {
+	readonly game: RoomTcg;
+	readonly timerRequesters = new Set<ID>();
+	timer: NodeJS.Timeout | null = null;
+	lastTick = 0;
+	lastDisabledTime = 0;
+	lastDisabledByUser: ID | null = null;
+	constructor(game: RoomTcg) {
+		this.game = game;
+		for (const player of game.players) {
+			player.secondsLeft = STARTING_TIME;
+			player.turnSecondsLeft = STARTING_TIME;
+		}
+	}
+	start(requester?: User) {
+		const userid = requester ? requester.id : 'staff' as ID;
+		if (this.timerRequesters.has(userid)) return false;
+		if (this.game.ended) {
+			requester?.sendTo(this.game.roomid, `|inactiveoff|The timer can't be enabled after a battle has ended.`);
+			return false;
+		}
+		if (this.timerRequesters.size) {
+			this.game.room.add(`|inactive|${requester ? requester.name : userid} also wants the timer to be on.`).update();
+			this.timerRequesters.add(userid);
+			return false;
+		}
+		if (requester && this.game.playerTable[requester.id] && this.lastDisabledByUser === requester.id) {
+			const cooldownLeft = (this.lastDisabledTime || 0) + TIMER_COOLDOWN - Date.now();
+			if (cooldownLeft > 0) {
+				this.game.playerTable[requester.id].sendRoom(
+					`|inactiveoff|The timer can't be re-enabled so soon after disabling it (${Math.ceil(cooldownLeft / SECONDS)} seconds remaining).`
+				);
+				return false;
+			}
+		}
+		this.timerRequesters.add(userid);
+		const requestedBy = requester ? ` (requested by ${requester.name})` : ``;
+		this.game.room.add(
+			`|inactive|Battle timer is ON: inactive players will automatically lose when time's up.${requestedBy}`
+		).update();
+		for (const player of this.game.players) this.nextRequest(player);
+		return true;
+	}
+	stop(requester?: User) {
+		if (requester) {
+			if (!this.timerRequesters.has(requester.id)) return false;
+			this.timerRequesters.delete(requester.id);
+			this.lastDisabledByUser = requester.id;
+			this.lastDisabledTime = Date.now();
+		} else {
+			this.timerRequesters.clear();
+		}
+		if (this.timerRequesters.size) {
+			this.game.room.add(
+				`|inactive|${requester!.name} no longer wants the timer on, but the timer is staying on because ${[...this.timerRequesters].join(', ')} still does.`
+			).update();
+			return false;
+		}
+		if (this.end()) {
+			this.game.room.add(`|inactiveoff|Battle timer is now OFF.`).update();
+			return true;
+		}
+		return false;
+	}
+	end() {
+		this.timerRequesters.clear();
+		if (!this.timer) return false;
+		clearTimeout(this.timer);
+		this.timer = null;
+		return true;
+	}
+	nextRequest(player: RoomTcgPlayer) {
+		if (!this.timerRequesters.size || this.game.ended) return;
+		if (requestIsWaiting(player.request)) {
+			player.turnSecondsLeft = MAX_TURN_TIME;
+			return;
+		}
+		if (this.timer) {
+			clearTimeout(this.timer);
+			this.timer = null;
+		}
+		player.turnSecondsLeft = Math.min(player.secondsLeft, MAX_TURN_TIME);
+		const secondsLeft = player.turnSecondsLeft;
+		player.sendRoom(`|inactive|Time left: ${secondsLeft} sec this turn | ${player.secondsLeft} sec total`);
+		if (secondsLeft <= 30) {
+			this.game.room.add(`|inactive|${player.name} has ${secondsLeft} seconds left this turn.`);
+		}
+		this.game.room.update();
+		this.lastTick = Date.now();
+		this.timer = setTimeout(() => this.nextTick(), TICK_TIME * SECONDS);
+	}
+	nextTick() {
+		if (this.timer) clearTimeout(this.timer);
+		this.timer = null;
+		if (this.game.ended || !this.timerRequesters.size) return;
+		const room = this.game.room;
+		const active = this.game.players.filter(p => !requestIsWaiting(p.request));
+		if (!active.length) return;
+		for (const player of active) {
+			player.secondsLeft -= TICK_TIME;
+			player.turnSecondsLeft -= TICK_TIME;
+			if (player.turnSecondsLeft <= 0 || player.secondsLeft <= 0) {
+				player.secondsLeft = 0;
+				player.turnSecondsLeft = 0;
+				room.add(`|inactive|${player.name} has timed out.`).update();
+				this.end();
+				this.game.forfeit(player.id);
+				return;
+			}
+			if (player.turnSecondsLeft % 30 === 0 || player.turnSecondsLeft <= 20) {
+				player.sendRoom(
+					`|inactive|Time left: ${player.turnSecondsLeft} sec this turn | ${player.secondsLeft} sec total`
+				);
+			}
+			if (player.turnSecondsLeft <= 30 && player.turnSecondsLeft % TICK_TIME === 0) {
+				room.add(`|inactive|${player.name} has ${player.turnSecondsLeft} seconds left this turn.`);
+			}
+		}
+		room.update();
+		this.lastTick = Date.now();
+		this.timer = setTimeout(() => this.nextTick(), TICK_TIME * SECONDS);
+	}
+}
 
 /**
  * Host wire per Wave-TCG docs/events.md:
@@ -285,6 +428,8 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 export class RoomTcgPlayer extends RoomGamePlayer<RoomTcg> {
 	readonly slot: TcgSlot;
 	request = '';
+	secondsLeft = STARTING_TIME;
+	turnSecondsLeft = STARTING_TIME;
 	constructor(user: User | string | null, game: RoomTcg, num: 1 | 2) {
 		super(user, game, num);
 		this.slot = `p${num}` as TcgSlot;
@@ -303,6 +448,13 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 	forcedSettings: { modchat?: string | null, privacy?: string | null } = {};
 	options: RoomBattleOptions;
 	override allowRenames: boolean;
+	override timer: RoomTcgTimer;
+	/** Spectator opening board for uploaded replays. */
+	replaySnapshot: TcgSnapshot | null = null;
+	/** Spectator-filtered events accumulated for upload. */
+	replayEvents: TcgEvent[] = [];
+	replaySaved: boolean | 'auto' = false;
+	winnerName = '';
 
 	constructor(room: GameRoom, options: RoomBattleOptions) {
 		super(room);
@@ -314,6 +466,7 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 		this.playerCap = 2;
 		this.allowRenames = options.allowRenames !== undefined ? !!options.allowRenames : (!options.rated && !options.tour);
 		this.stream = PM.createStream();
+		this.timer = new RoomTcgTimer(this);
 		void this.listen();
 		void this.stream.write(`>start ${JSON.stringify({
 			formatid: this.format,
@@ -348,6 +501,7 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 		this.room.active = true;
 		const users = this.players.map(player => player.getUser()).filter(Boolean) as User[];
 		Rooms.global.onCreateBattleRoom(users, this.room, { rated: this.rated });
+		if (Config.forcetimer || this.format.includes('blitz')) this.timer.start();
 	}
 
 	override makePlayer(user: User | string | null) {
@@ -459,24 +613,35 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 	receive(lines: string[]) {
 		switch (lines[0]) {
 		case 'update':
-			for (const line of lines.slice(1)) this.room.add(line);
+			for (const line of lines.slice(1)) {
+				this.ingestReplayLine(line);
+				this.room.add(line);
+			}
 			this.room.update();
 			break;
 		case 'sideupdate': {
 			const slot = lines[1] as TcgSlot;
 			const player = this[slot];
 			const rest = lines.slice(2).join('\n');
-			if (rest.startsWith('|request|')) player.request = rest.slice('|request|'.length);
+			if (rest.startsWith('|request|')) {
+				player.request = rest.slice('|request|'.length);
+				this.timer.nextRequest(player);
+			}
 			player.sendRoom(rest);
 			break;
 		}
 		case 'end': {
 			const data = JSON.parse(lines[1] || '{}') as { winner?: string };
 			this.room.active = false;
+			this.winnerName = data.winner || '';
+			this.timer.end();
 			this.setEnded();
 			if (data.winner) this.room.add(`|win|${data.winner}`);
 			else this.room.add(`|tie`);
 			this.room.update();
+			if (Config.autosavereplays) {
+				void this.uploadReplay(undefined, undefined, 'auto');
+			}
 			break;
 		}
 		case 'error':
@@ -485,7 +650,116 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 		}
 	}
 
+	/** Record spectator watch batches for `/savereplay`. */
+	ingestReplayLine(line: string) {
+		if (!line.startsWith('|tcg|')) return;
+		try {
+			const data = JSON.parse(line.slice('|tcg|'.length)) as {
+				kind?: string, snapshot?: TcgSnapshot, events?: TcgEvent[],
+			};
+			if (data.kind && data.kind !== 'watch') return;
+			if (data.snapshot && !this.replaySnapshot) {
+				this.replaySnapshot = data.snapshot;
+			}
+			if (data.events?.length) {
+				for (const ev of data.events) this.replayEvents.push(ev);
+			}
+		} catch {}
+	}
+
+	getTcgReplayLog() {
+		const format = Dex.formats.get(this.format, true);
+		const payload = {
+			format: format.id,
+			formatName: format.name,
+			p1: this.p1?.name || '',
+			p2: this.p2?.name || '',
+			winner: this.winnerName,
+			replay: {
+				snapshot: this.replaySnapshot,
+				events: this.replayEvents,
+			},
+		};
+		return `|tcgreplay|${JSON.stringify(payload)}`;
+	}
+
+	async uploadReplay(user?: User, connection?: Connection, options?: 'forpunishment' | 'silent' | 'auto') {
+		const format = Dex.formats.get(this.format, true);
+		const log = this.getTcgReplayLog();
+		if (!this.replaySnapshot) {
+			connection?.popup(`This TCG battle has no replay data yet.`);
+			return;
+		}
+		let rating: number | undefined;
+		if (this.ended && this.rated) rating = this.rated;
+		let { id, password } = this.room.getReplayData();
+		const silent = options === 'forpunishment' || options === 'silent' || options === 'auto';
+		if (silent) connection = undefined;
+		const isPrivate = this.room.settings.isPrivate || this.room.hideReplay;
+		const hidden = options === 'auto' ? 10 :
+			options === 'forpunishment' || (this.room as any).unlistReplay ? 2 :
+			isPrivate ? 1 :
+			0;
+		if (isPrivate && hidden !== 2) {
+			password = password || Replays.generatePassword();
+		}
+		if (this.replaySaved !== true && hidden === 10) {
+			this.replaySaved = 'auto';
+		} else {
+			this.replaySaved = true;
+		}
+
+		if (Replays.db) {
+			const idWithServer = Config.serverid === 'showdown' ? id : `${Config.serverid}-${id}`;
+			try {
+				const fullid = await Replays.add({
+					id: idWithServer,
+					log,
+					players: this.players.map(p => p.name),
+					format: format.name,
+					rating: Math.round(rating || 0) || null,
+					private: hidden,
+					password,
+					inputlog: null,
+					uploadtime: Math.trunc(Date.now() / 1000),
+				});
+				const url = `https://${Config.routes.replays}/${fullid}`;
+				connection?.popup(
+					`|html|<p>Your replay has been uploaded! It's available at:</p><p> ` +
+					`<a class="no-panel-intercept" href="${url}" target="_blank">${url}</a> ` +
+					`<copytext value="${url}">Copy</copytext>`
+				);
+			} catch (e) {
+				connection?.popup(`Your replay could not be saved: ${e}`);
+				throw e;
+			}
+			return;
+		}
+
+		const [result] = await LoginServer.request('addreplay', {
+			id,
+			log,
+			players: this.players.map(p => p.name).join(','),
+			format: format.name,
+			rating,
+			hidden: hidden === 0 ? '' : hidden,
+			password,
+		});
+		if (result?.errorip) {
+			connection?.popup(`This server's request IP ${result.errorip} is not a registered server.`);
+			return;
+		}
+		const fullid = result?.replayid;
+		const url = `https://${Config.routes.replays}/${fullid}`;
+		connection?.popup(
+			`|html|<p>Your replay has been uploaded! It's available at:</p><p> ` +
+			`<a class="no-panel-intercept" href="${url}" target="_blank">${url}</a> ` +
+			`<copytext value="${url}">Copy</copytext>`
+		);
+	}
+
 	override destroy() {
+		this.timer.end();
 		void this.stream.destroy();
 		super.destroy();
 	}
