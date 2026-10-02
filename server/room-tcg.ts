@@ -323,8 +323,8 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 
 		this.room.add(`|tier|${format.name}`);
 		const randomNote = Dex.formats.get(this.format).team ?
-			`Decks are assigned at random. No team required.` :
-			`Empty teams use a sample Pocket deck.`;
+			`Decks are assigned at random. No deck required.` :
+			`An empty deck uses a sample Pocket deck.`;
 		this.room.add(
 			`|html|<div class="broadcast-blue"><strong>${Utils.escapeHTML(format.name)}</strong> (WaveTCG)<br />` +
 			`Graphics: animate <code>TcgEvent</code>s from <code>|tcg|</code>; snapshot for join/resync. ` +
