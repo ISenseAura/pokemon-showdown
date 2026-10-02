@@ -380,10 +380,26 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		this.doAct(slot, action);
 	}
 
-	/** Strip chat log; attach slim format only on the first batch of the game. */
+	/** Strip chat log, static card text, and attach slim format only on the first batch. */
+	private slimMon(mon: TcgSnapshot['players'][0]['active']): TcgSnapshot['players'][0]['active'] {
+		if (!mon) return mon;
+		const {
+			attacks: _attacks, abilities: _abilities, image: _image, types: _types,
+			subtypes: _subtypes, weaknesses: _weaknesses, resistances: _resistances, retreat: _retreat,
+			...rest
+		} = mon as TcgSnapshot['players'][0]['active'] & Record<string, unknown>;
+		return rest as TcgSnapshot['players'][0]['active'];
+	}
 	private wireSnap(snap: TcgSnapshot, includeFormat: boolean): TcgWireSnapshot {
 		const { log: _log, format, ...rest } = snap;
-		const out: TcgWireSnapshot = rest;
+		const out: TcgWireSnapshot = {
+			...rest,
+			players: (rest.players || []).map(p => p ? {
+				...p,
+				active: this.slimMon(p.active),
+				bench: (p.bench || []).map(m => this.slimMon(m)),
+			} : p),
+		};
 		if (includeFormat && format) {
 			out.format = {
 				id: format.id,
@@ -403,6 +419,10 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 	private needsSnapshot(events: TcgEvent[]): boolean {
 		if (!this.snapshotSent) return true;
 		if (this.game?.status === 'over') return true;
+		// Opening deal is the first real board (hands exist). Pre-deal snapshot is empty shells.
+		if (events.some(e => e.type === 'deal')) return true;
+		// First turn reveals setup Pokémon, lays prizes, and fills the Energy Zone.
+		if (events.some(e => e.type === 'turn' && e.number === 1)) return true;
 		return false;
 	}
 
@@ -458,21 +478,29 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		const requestEv = events.find(e => e.type === 'request') as
 			| Extract<TcgEvent, { type: 'request' }> | undefined;
 		const actions = actionsOverride || snap?.actions || [];
+		const wait = !actions.length;
+		// Slim |request| is only for the inactivity timer (wait vs acting).
+		// The board, events, and legal actions live on |tcg|.
+		this.push(`sideupdate\n${slot}\n|request|${JSON.stringify({
+			tcg: true,
+			wait,
+			request: requestEv ? { kind: requestEv.kind, waiting: requestEv.waiting } : undefined,
+		})}`);
 		const payload: {
-			tcg: true, seq: number, wait: boolean, events: TcgEvent[], actions: TcgAction[],
+			kind: string, tcg: true, seq: number, wait: boolean, events: TcgEvent[], actions: TcgAction[],
 			snapshot?: TcgWireSnapshot,
 			request?: { kind: string, waiting: (0 | 1)[] },
 		} = {
+			kind: 'you',
 			tcg: true,
 			seq,
-			wait: !actions.length,
+			wait,
 			events,
 			actions,
 			request: requestEv ? { kind: requestEv.kind, waiting: requestEv.waiting } : undefined,
 		};
 		if (snap) payload.snapshot = snap;
-		this.push(`sideupdate\n${slot}\n|request|${JSON.stringify(payload)}`);
-		this.push(`sideupdate\n${slot}\n|tcg|${JSON.stringify({ kind: 'you', ...payload })}`);
+		this.push(`sideupdate\n${slot}\n|tcg|${JSON.stringify(payload)}`);
 	}
 
 	/** Join / refresh: one authoritative board so the client does not replay the whole match. */
