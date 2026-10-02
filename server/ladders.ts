@@ -17,7 +17,8 @@ const PERIODIC_MATCH_INTERVAL = 60 * SECONDS;
 
 import type { ChallengeType } from './room-battle';
 import { BattleReady, BattleChallenge, GameChallenge, BattleInvite, challenges } from './ladders-challenges';
-import { isTcgFormat, parseTcgDeck } from './tcg';
+import { deckProblems } from '../Wave-TCG';
+import { isTcgFormat, parseTcgDeck, tcgRulesId } from './tcg';
 
 /**
  * Keys are formatids
@@ -79,6 +80,14 @@ class Ladder extends LadderStore {
 				} else {
 					connection.popup(`Your TCG deck was rejected:\n\n- ${parsed.error}`);
 					return null;
+				}
+				// Constructed TCG: reject illegal decks before queue (empty → sample at battle start).
+				if (parsed.ok && parsed.deck.length) {
+					const { errors } = deckProblems(parsed.deck, tcgRulesId(this.formatid));
+					if (errors.length) {
+						connection.popup(`Your TCG deck is illegal:\n\n- ${errors.join('\n- ')}`);
+						return null;
+					}
 				}
 			}
 			let rating = 0;
