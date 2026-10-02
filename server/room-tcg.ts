@@ -264,6 +264,11 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 			this.emitEnd();
 			break;
 		}
+		case 'resync': {
+			const slot = message.trim() as TcgSlot | '';
+			this.pushResync(slot === 'p1' || slot === 'p2' ? slot : null);
+			break;
+		}
 		}
 	}
 
@@ -392,22 +397,12 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 	}
 
 	/**
-	 * Full board snapshots are for join / turn boundaries / structural changes / prompts.
-	 * Soft mid-turn batches (attach energy, damage, etc.) send events + actions only.
+	 * Full board snapshots are for first paint, reconnect, and game over.
+	 * Live acts send events + actions; the client applies them onto the cached board.
 	 */
 	private needsSnapshot(events: TcgEvent[]): boolean {
 		if (!this.snapshotSent) return true;
 		if (this.game?.status === 'over') return true;
-		/** Events that reshape the board or need pending* UI from a fresh snapshot. */
-		const hard = new Set([
-			'start', 'first', 'deal', 'turn', 'over',
-			'place', 'evolve', 'ko', 'prize', 'prizeTake', 'points',
-			'stadium', 'stadiumEnd',
-		]);
-		for (const e of events) {
-			if (hard.has(e.type)) return true;
-			if (e.type === 'request' && e.kind && e.kind !== 'turn') return true;
-		}
 		return false;
 	}
 
@@ -478,6 +473,25 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		if (snap) payload.snapshot = snap;
 		this.push(`sideupdate\n${slot}\n|request|${JSON.stringify(payload)}`);
 		this.push(`sideupdate\n${slot}\n|tcg|${JSON.stringify({ kind: 'you', ...payload })}`);
+	}
+
+	/** Join / refresh: one authoritative board so the client does not replay the whole match. */
+	private pushResync(slot: TcgSlot | null) {
+		if (!this.game) return;
+		const seq = this.game.eventSeq;
+		if (!slot) {
+			this.push(`update\n|tcg|${JSON.stringify({
+				kind: 'watch',
+				seq,
+				events: [],
+				snapshot: this.wireSnap(this.game.snapshot(), true),
+			})}`);
+			return;
+		}
+		const seat = this.seats[slot];
+		if (!seat) return;
+		const snap = this.wireSnap(this.game.snapshot(seat.id), true);
+		this.side(slot, snap, [], seq, snap.actions);
 	}
 
 	private emitEnd() {
@@ -628,9 +642,8 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 
 	override onConnect(user: User) {
 		const player = this.playerTable[user.id];
-		if (player?.request) {
-			player.sendRoom(`|request|${player.request}`);
-		}
+		if (player) void this.stream.write(`>resync ${player.slot}`);
+		else void this.stream.write(`>resync`);
 	}
 
 	override onJoin(user: User) {
