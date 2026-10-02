@@ -186,6 +186,8 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 	private lastTurn = 0;
 	/** Format is static for the battle; send it once, then omit. */
 	private formatSent = false;
+	/** Full board snapshot sent at least once (join / first batch). */
+	private snapshotSent = false;
 
 	override _write(chunk: string) {
 		const startTime = Date.now();
@@ -389,13 +391,35 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		return out;
 	}
 
-	/** Forward one act/construction batch: filtered events + snapshot resync. */
+	/**
+	 * Full board snapshots are for join / turn boundaries / structural changes / prompts.
+	 * Soft mid-turn batches (attach energy, damage, etc.) send events + actions only.
+	 */
+	private needsSnapshot(events: TcgEvent[]): boolean {
+		if (!this.snapshotSent) return true;
+		if (this.game?.status === 'over') return true;
+		/** Events that reshape the board or need pending* UI from a fresh snapshot. */
+		const hard = new Set([
+			'start', 'first', 'deal', 'turn', 'over',
+			'place', 'evolve', 'ko', 'prize', 'prizeTake', 'points',
+			'stadium', 'stadiumEnd',
+		]);
+		for (const e of events) {
+			if (hard.has(e.type)) return true;
+			if (e.type === 'request' && e.kind && e.kind !== 'turn') return true;
+		}
+		return false;
+	}
+
+	/** Forward one act/construction batch: events always; snapshot when needed for resync. */
 	private pushBatch(events: TcgEvent[]) {
 		if (!this.game) return;
-		const pack = packGame(this.game);
 		const seq = this.game.eventSeq;
 		const includeFormat = !this.formatSent;
+		const includeSnap = this.needsSnapshot(events);
 		this.formatSent = true;
+		if (includeSnap) this.snapshotSent = true;
+		const pack = includeSnap ? packGame(this.game) : null;
 		const update = ['update'];
 		for (const e of events) {
 			if (e.type === 'turn' && e.number && e.number !== this.lastTurn) {
@@ -403,41 +427,55 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 				this.lastTurn = e.number;
 			}
 		}
-		update.push(`|tcg|${JSON.stringify({
+		const watchPayload: { kind: string, seq: number, events: TcgEvent[], snapshot?: TcgWireSnapshot } = {
 			kind: 'watch',
 			seq,
 			events: this.game.viewEvents(undefined, events),
-			snapshot: this.wireSnap(pack.watch, includeFormat),
-		})}`);
+		};
+		if (pack) watchPayload.snapshot = this.wireSnap(pack.watch, includeFormat);
+		update.push(`|tcg|${JSON.stringify(watchPayload)}`);
 		this.push(update.join('\n'));
 		const p1 = this.seats.p1!;
 		const p2 = this.seats.p2!;
 		this.side(
 			'p1',
-			this.wireSnap(pack.views[p1.id] || this.game.snapshot(p1.id), includeFormat),
+			pack ? this.wireSnap(pack.views[p1.id] || this.game.snapshot(p1.id), includeFormat) : null,
 			this.game.viewEvents(p1.id, events),
 			seq,
+			pack ? undefined : this.game.legalActions(p1.id),
 		);
 		this.side(
 			'p2',
-			this.wireSnap(pack.views[p2.id] || this.game.snapshot(p2.id), includeFormat),
+			pack ? this.wireSnap(pack.views[p2.id] || this.game.snapshot(p2.id), includeFormat) : null,
 			this.game.viewEvents(p2.id, events),
 			seq,
+			pack ? undefined : this.game.legalActions(p2.id),
 		);
 	}
 
-	private side(slot: TcgSlot, snap: TcgWireSnapshot, events: TcgEvent[], seq: number) {
+	private side(
+		slot: TcgSlot,
+		snap: TcgWireSnapshot | null,
+		events: TcgEvent[],
+		seq: number,
+		actionsOverride?: TcgAction[],
+	) {
 		const requestEv = events.find(e => e.type === 'request') as
 			| Extract<TcgEvent, { type: 'request' }> | undefined;
-		const payload = {
+		const actions = actionsOverride || snap?.actions || [];
+		const payload: {
+			tcg: true, seq: number, wait: boolean, events: TcgEvent[], actions: TcgAction[],
+			snapshot?: TcgWireSnapshot,
+			request?: { kind: string, waiting: (0 | 1)[] },
+		} = {
 			tcg: true,
 			seq,
-			wait: !snap.actions.length,
-			snapshot: snap,
+			wait: !actions.length,
 			events,
-			actions: snap.actions,
+			actions,
 			request: requestEv ? { kind: requestEv.kind, waiting: requestEv.waiting } : undefined,
 		};
+		if (snap) payload.snapshot = snap;
 		this.push(`sideupdate\n${slot}\n|request|${JSON.stringify(payload)}`);
 		this.push(`sideupdate\n${slot}\n|tcg|${JSON.stringify({ kind: 'you', ...payload })}`);
 	}
