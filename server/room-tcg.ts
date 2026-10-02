@@ -167,6 +167,14 @@ export class RoomTcgTimer {
  * after start/act → viewEvents per seat + snapshot for resync.
  * Graphics animate TcgEvent[]; do not invent motion from TcgFlash.
  */
+/** Client-facing format fields only (full FormatRules is ~576 B of legality noise). */
+type TcgWireFormat = {
+	id: string, name: string, benchSize: number, prizes: number, energyZone?: boolean,
+};
+
+/** Snapshot on the wire: no chat log; format only on the first batch of a game. */
+type TcgWireSnapshot = Omit<TcgSnapshot, 'log' | 'format'> & { format?: TcgWireFormat };
+
 export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 	game: PokemonTcg | null = null;
 	formatid = 'tcgpocket';
@@ -176,6 +184,8 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 	private cpuSlots = new Set<TcgSlot>();
 	private cpuTimer: NodeJS.Timeout | null = null;
 	private lastTurn = 0;
+	/** Format is static for the battle; send it once, then omit. */
+	private formatSent = false;
 
 	override _write(chunk: string) {
 		const startTime = Date.now();
@@ -363,11 +373,29 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		this.doAct(slot, action);
 	}
 
+	/** Strip chat log; attach slim format only on the first batch of the game. */
+	private wireSnap(snap: TcgSnapshot, includeFormat: boolean): TcgWireSnapshot {
+		const { log: _log, format, ...rest } = snap;
+		const out: TcgWireSnapshot = rest;
+		if (includeFormat && format) {
+			out.format = {
+				id: format.id,
+				name: format.name,
+				benchSize: format.benchSize,
+				prizes: format.prizes,
+				...(format.energyZone ? { energyZone: true } : {}),
+			};
+		}
+		return out;
+	}
+
 	/** Forward one act/construction batch: filtered events + snapshot resync. */
 	private pushBatch(events: TcgEvent[]) {
 		if (!this.game) return;
 		const pack = packGame(this.game);
 		const seq = this.game.eventSeq;
+		const includeFormat = !this.formatSent;
+		this.formatSent = true;
 		const update = ['update'];
 		for (const e of events) {
 			if (e.type === 'turn' && e.number && e.number !== this.lastTurn) {
@@ -379,26 +407,26 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 			kind: 'watch',
 			seq,
 			events: this.game.viewEvents(undefined, events),
-			snapshot: pack.watch,
+			snapshot: this.wireSnap(pack.watch, includeFormat),
 		})}`);
 		this.push(update.join('\n'));
 		const p1 = this.seats.p1!;
 		const p2 = this.seats.p2!;
 		this.side(
 			'p1',
-			pack.views[p1.id] || this.game.snapshot(p1.id),
+			this.wireSnap(pack.views[p1.id] || this.game.snapshot(p1.id), includeFormat),
 			this.game.viewEvents(p1.id, events),
 			seq,
 		);
 		this.side(
 			'p2',
-			pack.views[p2.id] || this.game.snapshot(p2.id),
+			this.wireSnap(pack.views[p2.id] || this.game.snapshot(p2.id), includeFormat),
 			this.game.viewEvents(p2.id, events),
 			seq,
 		);
 	}
 
-	private side(slot: TcgSlot, snap: TcgSnapshot, events: TcgEvent[], seq: number) {
+	private side(slot: TcgSlot, snap: TcgWireSnapshot, events: TcgEvent[], seq: number) {
 		const requestEv = events.find(e => e.type === 'request') as
 			| Extract<TcgEvent, { type: 'request' }> | undefined;
 		const payload = {
