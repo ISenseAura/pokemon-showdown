@@ -16,6 +16,7 @@ import {
 	PokemonTcg, autoDeck, buildSampleDeck, chooseAction, loadCatalog, packGame, parseFormat, rollAssignedDeckPair, validateDeck,
 } from '../Wave-TCG';
 import { Replays } from './replays';
+import { realPassword, saveTcgReplay, tcgReplayShareUrl } from './tcg-replays';
 
 type TcgSlot = 'p1' | 'p2';
 type TcgSeat = { id: string, name: string, deck: string[], cpu?: boolean };
@@ -24,24 +25,17 @@ const TICK_TIME = 5;
 const SECONDS = 1000;
 const STARTING_TIME = 150;
 const MAX_TURN_TIME = 150;
+/** Same as RoomBattleTimer singles: bank grows a little at the start of each new turn, capped at STARTING_TIME. */
+const ADD_PER_TURN = 10;
 const TIMER_COOLDOWN = 20 * SECONDS;
 
-function requestIsWaiting(request: string): boolean {
-	if (!request) return true;
-	try {
-		const data = JSON.parse(request) as { wait?: boolean, actions?: unknown[] };
-		if (data.wait != null) return !!data.wait;
-		return !data.actions?.length;
-	} catch {
-		return true;
-	}
-}
-
-/** Inactivity timer for TCG — same `/timer` surface as RoomBattleTimer. */
+/** Inactivity timer for TCG — same model as RoomBattleTimer (bank + per-turn cap, pause while waiting). */
 export class RoomTcgTimer {
 	readonly game: RoomTcg;
 	readonly timerRequesters = new Set<ID>();
 	timer: NodeJS.Timeout | null = null;
+	/** Last TCG turnNumber we applied add-per-turn for. */
+	turn: number | null = null;
 	lastTick = 0;
 	lastDisabledTime = 0;
 	lastDisabledByUser: ID | null = null;
@@ -78,7 +72,14 @@ export class RoomTcgTimer {
 		this.game.room.add(
 			`|inactive|Battle timer is ON: inactive players will automatically lose when time's up.${requestedBy}`
 		).update();
-		for (const player of this.game.players) this.nextRequest(player);
+		for (const player of this.game.players) {
+			let turn: number | undefined;
+			try {
+				const data = JSON.parse(player.request) as { turn?: number };
+				turn = data.turn;
+			} catch {}
+			this.nextRequest(player, turn);
+		}
 		return true;
 	}
 	stop(requester?: User) {
@@ -109,9 +110,24 @@ export class RoomTcgTimer {
 		this.timer = null;
 		return true;
 	}
-	nextRequest(player: RoomTcgPlayer) {
+	/** When the TCG turn number advances, top the bank up (capped), like RoomBattleTimer.updateTurn. */
+	updateTurn(turn: number) {
+		if (this.turn === null) {
+			this.turn = turn;
+			return;
+		}
+		if (turn <= this.turn) return;
+		this.turn = turn;
+		for (const player of this.game.players) {
+			player.secondsLeft = Math.min(player.secondsLeft + ADD_PER_TURN, STARTING_TIME);
+		}
+	}
+	nextRequest(player: RoomTcgPlayer, turn?: number) {
 		if (!this.timerRequesters.size || this.game.ended) return;
-		if (requestIsWaiting(player.request)) {
+		if (player.secondsLeft <= 0) return;
+		// Waiting players do not tick. Do not send them a Time left line — that is what
+		// made the client keep counting through the opponent's turn.
+		if (player.isWait) {
 			player.turnSecondsLeft = MAX_TURN_TIME;
 			return;
 		}
@@ -119,10 +135,13 @@ export class RoomTcgTimer {
 			clearTimeout(this.timer);
 			this.timer = null;
 		}
+		if (this.game.players.filter(p => p.secondsLeft > 0).length <= 1) return;
+
+		if (turn != null) this.updateTurn(turn);
 		player.turnSecondsLeft = Math.min(player.secondsLeft, MAX_TURN_TIME);
 		const secondsLeft = player.turnSecondsLeft;
 		player.sendRoom(`|inactive|Time left: ${secondsLeft} sec this turn | ${player.secondsLeft} sec total`);
-		if (secondsLeft <= 30) {
+		if (secondsLeft <= 30 && secondsLeft < STARTING_TIME) {
 			this.game.room.add(`|inactive|${player.name} has ${secondsLeft} seconds left this turn.`);
 		}
 		this.game.room.update();
@@ -134,7 +153,7 @@ export class RoomTcgTimer {
 		this.timer = null;
 		if (this.game.ended || !this.timerRequesters.size) return;
 		const room = this.game.room;
-		const active = this.game.players.filter(p => !requestIsWaiting(p.request));
+		const active = this.game.players.filter(p => !p.isWait && p.secondsLeft > 0);
 		if (!active.length) return;
 		for (const player of active) {
 			player.secondsLeft -= TICK_TIME;
@@ -388,7 +407,7 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 			subtypes: _subtypes, weaknesses: _weaknesses, resistances: _resistances, retreat: _retreat,
 			...rest
 		} = mon as TcgSnapshot['players'][0]['active'] & Record<string, unknown>;
-		return rest as TcgSnapshot['players'][0]['active'];
+		return rest as unknown as TcgSnapshot['players'][0]['active'];
 	}
 	private wireSnap(snap: TcgSnapshot, includeFormat: boolean): TcgWireSnapshot {
 		const { log: _log, format, ...rest } = snap;
@@ -457,14 +476,14 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 			pack ? this.wireSnap(pack.views[p1.id] || this.game.snapshot(p1.id), includeFormat) : null,
 			this.game.viewEvents(p1.id, events),
 			seq,
-			pack ? undefined : this.game.legalActions(p1.id),
+			this.game.legalActions(p1.id),
 		);
 		this.side(
 			'p2',
 			pack ? this.wireSnap(pack.views[p2.id] || this.game.snapshot(p2.id), includeFormat) : null,
 			this.game.viewEvents(p2.id, events),
 			seq,
-			pack ? undefined : this.game.legalActions(p2.id),
+			this.game.legalActions(p2.id),
 		);
 	}
 
@@ -484,6 +503,7 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		this.push(`sideupdate\n${slot}\n|request|${JSON.stringify({
 			tcg: true,
 			wait,
+			turn: this.game?.turnNumber ?? 0,
 			request: requestEv ? { kind: requestEv.kind, waiting: requestEv.waiting } : undefined,
 		})}`);
 		const payload: {
@@ -536,6 +556,8 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 export class RoomTcgPlayer extends RoomGamePlayer<RoomTcg> {
 	readonly slot: TcgSlot;
 	request = '';
+	/** True while this seat has no legal actions — timer must not tick. */
+	isWait = true;
 	secondsLeft = STARTING_TIME;
 	turnSecondsLeft = STARTING_TIME;
 	constructor(user: User | string | null, game: RoomTcg, num: 1 | 2) {
@@ -732,7 +754,14 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 			const rest = lines.slice(2).join('\n');
 			if (rest.startsWith('|request|')) {
 				player.request = rest.slice('|request|'.length);
-				this.timer.nextRequest(player);
+				try {
+					const data = JSON.parse(player.request) as { wait?: boolean, turn?: number };
+					player.isWait = !!data.wait;
+					this.timer.nextRequest(player, data.turn);
+				} catch {
+					player.isWait = !player.request;
+					this.timer.nextRequest(player);
+				}
 			}
 			player.sendRoom(rest);
 			break;
@@ -808,7 +837,9 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 			isPrivate ? 1 :
 			0;
 		if (isPrivate && hidden !== 2) {
-			password = password || Replays.generatePassword();
+			password = realPassword(password) || Replays.generatePassword();
+		} else {
+			password = realPassword(password);
 		}
 		if (this.replaySaved !== true && hidden === 10) {
 			this.replaySaved = 'auto';
@@ -816,53 +847,27 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 			this.replaySaved = true;
 		}
 
-		if (Replays.db) {
-			const idWithServer = Config.serverid === 'showdown' ? id : `${Config.serverid}-${id}`;
-			try {
-				const fullid = await Replays.add({
-					id: idWithServer,
-					log,
-					players: this.players.map(p => p.name),
-					format: format.name,
-					rating: Math.round(rating || 0) || null,
-					private: hidden,
-					password,
-					inputlog: null,
-					uploadtime: Math.trunc(Date.now() / 1000),
-				});
-				const url = `https://${Config.routes.replays}/${fullid}`;
-				connection?.popup(
-					`|html|<p>Your replay has been uploaded! It's available at:</p><p> ` +
-					`<a class="no-panel-intercept" href="${url}" target="_blank">${url}</a> ` +
-					`<copytext value="${url}">Copy</copytext>`
-				);
-			} catch (e) {
-				connection?.popup(`Your replay could not be saved: ${e}`);
-				throw e;
-			}
-			return;
+		try {
+			await saveTcgReplay({
+				id,
+				log,
+				players: this.players.map(p => p.name),
+				format: format.name,
+				rating: Math.round(rating || 0) || null,
+				private: hidden,
+				password,
+				uploadtime: Math.trunc(Date.now() / 1000),
+			});
+			const url = tcgReplayShareUrl(id, password);
+			connection?.popup(
+				`|html|<p>Your replay has been uploaded! It's available at:</p><p> ` +
+				`<a class="no-panel-intercept" href="${url}" target="_blank">${url}</a> ` +
+				`<copytext value="${url}">Copy</copytext>`
+			);
+		} catch (e) {
+			connection?.popup(`Your replay could not be saved: ${e}`);
+			throw e;
 		}
-
-		const [result] = await LoginServer.request('addreplay', {
-			id,
-			log,
-			players: this.players.map(p => p.name).join(','),
-			format: format.name,
-			rating,
-			hidden: hidden === 0 ? '' : hidden,
-			password,
-		});
-		if (result?.errorip) {
-			connection?.popup(`This server's request IP ${result.errorip} is not a registered server.`);
-			return;
-		}
-		const fullid = result?.replayid;
-		const url = `https://${Config.routes.replays}/${fullid}`;
-		connection?.popup(
-			`|html|<p>Your replay has been uploaded! It's available at:</p><p> ` +
-			`<a class="no-panel-intercept" href="${url}" target="_blank">${url}</a> ` +
-			`<copytext value="${url}">Copy</copytext>`
-		);
 	}
 
 	override destroy() {

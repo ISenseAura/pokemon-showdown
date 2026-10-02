@@ -20,6 +20,7 @@ import { crashlogger, ProcessManager, Streams } from '../lib';
 import { IPTools } from './ip-tools';
 import { type ChannelID, extractChannelMessages } from '../sim/battle';
 import { StaticServer } from '../lib/static-server';
+import { serveTcgReplayHttp } from './tcg-replays';
 
 type StreamWorker = ProcessManager.StreamWorker;
 
@@ -348,6 +349,7 @@ export class ServerStream extends Streams.ObjectReadWriteStream<string> {
 					if (config.customhttpresponse?.(req, res)) {
 						return;
 					}
+					if (serveTcgReplayHttp(req, res)) return;
 
 					let server = staticServer;
 					if (req.url) {
