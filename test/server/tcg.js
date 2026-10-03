@@ -16,7 +16,11 @@ describe('TCG host', () => {
 			assert.equal(isTcgFormat('[TCG] Standard Random'), true);
 			assert.equal(isTcgFormat('tcgstandardrandom'), true);
 			assert.equal(isTcgFormat('gen9ou'), false);
+			assert.equal(isTcgFormat('gen6tcgstandard'), true);
+			assert.equal(isTcgFormat('gen6tcgpocket'), true);
 			assert.equal(tcgRulesId('tcgpocket'), 'pocket');
+			assert.equal(tcgRulesId('gen6tcgstandard'), 'standard');
+			assert.equal(tcgRulesId('gen6tcgpocket'), 'pocket');
 			assert.equal(tcgRulesId('tcgpocketrandom'), 'pocketrandom');
 			assert.equal(tcgRulesId('tcgstandard'), 'standard');
 			assert.equal(tcgRulesId('tcgstandardrandom'), 'standardrandom');

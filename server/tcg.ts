@@ -18,16 +18,21 @@ const TCG_FORMATS: { [id: string]: string } = {
 	tcgstandardrandom: 'standardrandom',
 };
 
+/** `gen6tcgstandard` (teambuilder label) and `tcgstandard` (ladder id) are the same format. */
+function bareTcgId(formatid: string): string {
+	return toID(formatid).replace(/^gen\d/, '');
+}
+
 export function isTcgFormat(format: { id?: string, name?: string } | string): boolean {
-	const id = typeof format === 'string' ? toID(format) : toID(format.id || format.name || '');
-	if (id.startsWith('tcg')) return true;
+	const raw = typeof format === 'string' ? format : (format.id || format.name || '');
+	if (bareTcgId(raw).startsWith('tcg')) return true;
 	if (typeof format === 'object' && format.name?.includes('[TCG]')) return true;
 	return false;
 }
 
-/** WaveTCG format id (`pocket`) from a Showdown format id (`tcgpocket`). */
+/** WaveTCG format id (`pocket`) from a Showdown format id (`tcgpocket` or `gen6tcgpocket`). */
 export function tcgRulesId(formatid: string): string {
-	const id = toID(formatid);
+	const id = bareTcgId(formatid);
 	return TCG_FORMATS[id] || (id.startsWith('tcg') ? id.slice(3) : 'pocket');
 }
 
