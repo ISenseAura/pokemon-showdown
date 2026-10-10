@@ -285,7 +285,12 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		}
 		case 'resync': {
 			const slot = message.trim() as TcgSlot | '';
-			this.pushResync(slot === 'p1' || slot === 'p2' ? slot : null);
+			if (slot === 'p1' || slot === 'p2') this.pushResync(slot);
+			break;
+		}
+		case 'resync-spectator': {
+			const userId = toID(message.trim());
+			if (userId) this.pushSpectatorResync(userId);
 			break;
 		}
 		}
@@ -509,6 +514,7 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		events: TcgEvent[],
 		seq: number,
 		actionsOverride?: TcgAction[],
+		resync = false,
 	) {
 		const requestEv = events.find(e => e.type === 'request') as
 			| Extract<TcgEvent, { type: 'request' }> | undefined;
@@ -524,7 +530,7 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 		})}`);
 		const payload: {
 			kind: string, tcg: true, seq: number, wait: boolean, events: TcgEvent[], actions: TcgAction[],
-			snapshot?: TcgWireSnapshot,
+			snapshot?: TcgWireSnapshot, resync?: boolean,
 			request?: { kind: string, waiting: (0 | 1)[] },
 		} = {
 			kind: 'you',
@@ -536,26 +542,34 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 			request: requestEv ? { kind: requestEv.kind, waiting: requestEv.waiting } : undefined,
 		};
 		if (snap) payload.snapshot = snap;
+		if (resync) payload.resync = true;
 		this.push(`sideupdate\n${slot}\n|tcg|${JSON.stringify(payload)}`);
 	}
 
 	/** Join / refresh: one authoritative board so the client does not replay the whole match. */
-	private pushResync(slot: TcgSlot | null) {
+	private pushResync(slot: TcgSlot) {
 		if (!this.game) return;
 		const seq = this.game.eventSeq;
-		if (!slot) {
-			this.push(`update\n|tcg|${JSON.stringify({
-				kind: 'watch',
-				seq,
-				events: [],
-				snapshot: this.wireSnap(this.game.snapshot(), true),
-			})}`);
-			return;
-		}
 		const seat = this.seats[slot];
 		if (!seat) return;
 		const snap = this.wireSnap(this.game.snapshot(seat.id), true);
-		this.side(slot, snap, [], seq, snap.actions);
+		this.side(slot, snap, [], seq, snap.actions, true);
+	}
+
+	/** Identity resync for one spectator — not broadcast on the public room log. */
+	private pushSpectatorResync(userId: ID) {
+		if (!this.game) return;
+		const seq = this.game.eventSeq;
+		const payload = {
+			kind: 'watch',
+			tcg: true,
+			resync: true,
+			seq,
+			events: [] as TcgEvent[],
+			actions: [] as TcgAction[],
+			snapshot: this.wireSnap(this.game.snapshot(), true),
+		};
+		this.push(`userupdate\n${userId}\n|tcg|${JSON.stringify(payload)}`);
 	}
 
 	private emitEnd() {
@@ -707,9 +721,19 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 	}
 
 	override onConnect(user: User) {
+		this.resyncUser(user);
+	}
+
+	/** After login/logout/reconnect: private board for seats, spectator snapshot for everyone else. */
+	resyncUser(user: User) {
 		const player = this.playerTable[user.id];
 		if (player) void this.stream.write(`>resync ${player.slot}`);
-		else void this.stream.write(`>resync`);
+		else void this.stream.write(`>resync-spectator ${user.id}`);
+	}
+
+	override onRename(user: User, oldUserid: ID, isJoining: boolean, isForceRenamed: boolean) {
+		super.onRename(user, oldUserid, isJoining, isForceRenamed);
+		if (user.inRooms.has(this.roomid)) this.resyncUser(user);
 	}
 
 	override onJoin(user: User) {
@@ -780,6 +804,13 @@ export class RoomTcg extends RoomGame<RoomTcgPlayer> {
 				}
 			}
 			player.sendRoom(rest);
+			break;
+		}
+		case 'userupdate': {
+			const userid = lines[1] as ID;
+			const rest = lines.slice(2).join('\n');
+			const user = Users.get(userid);
+			if (user?.connected) user.sendTo(this.roomid, rest);
 			break;
 		}
 		case 'end': {
