@@ -419,6 +419,19 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 				bench: (p.bench || []).map(m => this.slimMon(m)),
 			} : p),
 		};
+		if (out.you == null) {
+			out.actions = [];
+			delete out.pendingSearch;
+			delete out.pendingDiscard;
+			delete out.pendingRetreatPay;
+			delete out.pendingConfirm;
+			delete out.pendingSlotPick;
+			delete out.pendingCopyAttack;
+			out.players = (out.players || []).map(p => p ? {
+				...p,
+				hand: Array.isArray(p.hand) ? { count: p.hand.length } : p.hand,
+			} : p);
+		}
 		if (includeFormat && format) {
 			out.format = {
 				id: format.id,
@@ -461,10 +474,13 @@ export class TcgBattleStream extends Streams.ObjectReadWriteStream<string> {
 				this.lastTurn = e.number;
 			}
 		}
-		const watchPayload: { kind: string, seq: number, events: TcgEvent[], snapshot?: TcgWireSnapshot } = {
+		const watchPayload: {
+			kind: string, seq: number, events: TcgEvent[], actions: TcgAction[], snapshot?: TcgWireSnapshot,
+		} = {
 			kind: 'watch',
 			seq,
 			events: this.game.viewEvents(undefined, events),
+			actions: [],
 		};
 		if (pack) watchPayload.snapshot = this.wireSnap(pack.watch, includeFormat);
 		update.push(`|tcg|${JSON.stringify(watchPayload)}`);
